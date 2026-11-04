@@ -3,10 +3,15 @@
 // transcribes and tidies the text; we paste it into the app that had the focus and
 // then put back whatever was on the clipboard.
 const { BrowserWindow, globalShortcut, clipboard, screen, ipcMain } = require('electron');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+
+// Special shortcut value: Ctrl + Windows, read by acta-audio.exe's keyboard hook.
+// Hold it to talk and let go to paste; a quick tap keeps listening until the next tap.
+const CTRL_WIN = 'CtrlWin';
+const TAP_MS = 400;
 
 const PILL_W = 420;
 const PILL_H = 110;
@@ -19,7 +24,12 @@ function createDictation({ baseUrl, helperBin, onState }) {
   let registered = '';
   let hideTimer = null;
 
-  const label = (acc) => acc.replace('CommandOrControl', process.platform === 'darwin' ? '⌘' : 'Ctrl').replace('Space', 'Espacio').replace(/\+/g, '+');
+  let hook = null;        // acta-audio.exe hotkey child
+  let hookWanted = false;
+  let pressAt = 0;
+  let startedByPress = false;
+
+  const label = (acc) => acc === CTRL_WIN ? 'Ctrl + Windows' : acc.replace('CommandOrControl', process.platform === 'darwin' ? '⌘' : 'Ctrl').replace('Space', 'Espacio').replace(/\+/g, '+');
 
   function ensurePill() {
     if (pill && !pill.isDestroyed()) return pillReady;
@@ -59,27 +69,36 @@ function createDictation({ baseUrl, helperBin, onState }) {
   function escOn() { try { globalShortcut.register('Escape', cancel); } catch { /* taken */ } }
   function escOff() { try { globalShortcut.unregister('Escape'); } catch { /* not ours */ } }
 
-  async function start() {
-    if (state !== 'idle') return;
+  let starting = null;
+
+  function start(hint) {
+    if (state !== 'idle') return starting;
     clearTimeout(hideTimer);
-    await ensurePill();
-    place();
-    pill.showInactive();
     setState('recording');
-    escOn();
-    send('start', { hint: `${label(settings.dictationShortcut)} para pegar · Esc cancela` });
+    starting = (async () => {
+      await ensurePill();
+      place();
+      pill.showInactive();
+      escOn();
+      // The pill queues a stop that arrives while the mic is still opening.
+      send('start', { hint: hint || `${label(settings.dictationShortcut)} para pegar · Esc cancela` });
+    })();
+    return starting;
   }
 
-  function stop() {
+  async function stop() {
     if (state !== 'recording') return;
     escOff();
     setState('busy');
+    await starting;
     send('stop');
   }
 
-  function cancel() {
+  async function cancel() {
     if (state !== 'recording') return;
     escOff();
+    setState('idle');
+    await starting;
     send('cancel');
     setState('idle');
     message('Dictado cancelado', { ms: 700 });
@@ -87,7 +106,66 @@ function createDictation({ baseUrl, helperBin, onState }) {
 
   function toggle() {
     if (state === 'idle') void start();
-    else if (state === 'recording') stop();
+    else if (state === 'recording') void stop();
+  }
+
+  // Ctrl + Windows: hold to talk, or tap to start and tap again to finish.
+  function onHotkey(ev) {
+    if (ev === 'down') {
+      if (state === 'idle') {
+        pressAt = Date.now();
+        startedByPress = true;
+        void start('Suelta para pegar · toque corto: manos libres · Esc cancela');
+      } else if (state === 'recording') {
+        startedByPress = false;
+        void stop();
+      }
+    } else if (ev === 'up') {
+      if (state === 'recording' && startedByPress) {
+        startedByPress = false;
+        if (Date.now() - pressAt > TAP_MS) void stop();
+        else send('hint', { hint: 'Manos libres · Ctrl + Windows para pegar · Esc cancela' });
+      }
+    } else if (ev === 'cancel') {
+      // Ctrl+Win+<key> is a Windows shortcut: drop the dictation it accidentally started.
+      if (state === 'recording' && startedByPress && Date.now() - pressAt < 1500) {
+        startedByPress = false;
+        escOff();
+        setState('idle');
+        void Promise.resolve(starting).then(() => {
+          send('cancel');
+          if (state === 'idle' && pill && !pill.isDestroyed()) pill.hide();
+        });
+      }
+    }
+  }
+
+  function startHook() {
+    hookWanted = true;
+    if (hook || process.platform !== 'win32' || !fs.existsSync(helperBin)) return hook || fs.existsSync(helperBin);
+    hook = spawn(helperBin, ['hotkey'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    let buf = '';
+    hook.stdout.setEncoding('utf8');
+    hook.stdout.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        try { const j = JSON.parse(line); if (j.hotkey) onHotkey(j.hotkey); } catch { /* not ours */ }
+      }
+    });
+    hook.stderr.on('data', (d) => console.warn('[dictado] hotkey', String(d).trim()));
+    hook.on('exit', () => {
+      hook = null;
+      if (hookWanted) setTimeout(() => { if (hookWanted) startHook(); }, 2000);
+    });
+    return true;
+  }
+
+  function stopHook() {
+    hookWanted = false;
+    if (hook) { try { hook.kill(); } catch { /* gone */ } hook = null; }
   }
 
   function postPcm(buf) {
@@ -168,9 +246,17 @@ function createDictation({ baseUrl, helperBin, onState }) {
 
   function apply(next) {
     settings = { ...settings, ...next };
-    if (registered) { try { globalShortcut.unregister(registered); } catch { /* gone */ } registered = ''; }
+    if (registered && registered !== CTRL_WIN) { try { globalShortcut.unregister(registered); } catch { /* gone */ } }
+    registered = '';
+    stopHook();
     if (!settings.dictationEnabled) { if (state === 'recording') cancel(); return { ok: true }; }
     const acc = settings.dictationShortcut || 'CommandOrControl+Shift+Space';
+    if (acc === CTRL_WIN) {
+      const ok = startHook();
+      if (ok) registered = CTRL_WIN;
+      else console.warn('[dictado] Ctrl + Windows necesita acta-audio.exe (solo Windows)');
+      return { ok, shortcut: acc };
+    }
     let ok = false;
     try { ok = globalShortcut.register(acc, toggle); } catch { ok = false; }
     if (ok) registered = acc;
@@ -191,7 +277,7 @@ function createDictation({ baseUrl, helperBin, onState }) {
     return r;
   }
 
-  return { init, apply, toggle, get state() { return state; }, get shortcut() { return registered; } };
+  return { init, apply, toggle, dispose: stopHook, get state() { return state; }, get shortcut() { return registered && registered !== CTRL_WIN ? registered : ''; } };
 }
 
 module.exports = { createDictation };

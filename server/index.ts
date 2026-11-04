@@ -15,7 +15,7 @@ import {
   bus, activeSession, startRecording, stopRecording, pauseRecording, resumeRecording, helperAvailable, RecordingSession, startFileSource,
 } from './recorder.ts';
 import { upcomingEvents, calendarErrors, clearCalendarCache, type CalEvent } from './calendar.ts';
-import { detectorState, startDetector, startCalendarWatcher } from './detector.ts';
+import { detectorState, startDetector, startCalendarWatcher, stopDetector } from './detector.ts';
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
 import { providerAvailable } from './llm.ts';
 import { dictate, dictationSettings } from './dictation.ts';
@@ -633,5 +633,23 @@ server.listen(PORT, '127.0.0.1', () => {
   startCalendarWatcher();
 });
 
-process.on('SIGTERM', async () => { await stopRecording('shutdown'); process.exit(0); });
-process.on('SIGINT', async () => { await stopRecording('shutdown'); process.exit(0); });
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopDetector();
+  await stopRecording('shutdown').catch(() => {});
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => void shutdown());
+
+// If the desktop shell dies without telling us (crash, Task Manager), don't stay behind
+// holding the port: the next Acta would refuse to start.
+const parentPid = Number(process.env.ACTA_PARENT_PID || 0);
+if (parentPid) {
+  setInterval(() => {
+    try { process.kill(parentPid, 0); }
+    catch (e: any) { if (e?.code === 'ESRCH') { console.log('[server] la app se ha cerrado; salgo'); void shutdown(); } }
+  }, 3000).unref();
+}

@@ -38,6 +38,7 @@
   for (let i = 0; i < 9; i++) bars.appendChild(document.createElement('i'));
 
   let stream = null, ctx = null, node = null, chunks = [], samples = 0, recording = false, maxTimer = null;
+  let opening = false, pending = null; // 'stop' | 'cancel' that arrived while the mic was opening
 
   function view(state, text, hint) {
     $('pill').classList.toggle('error', state === 'error');
@@ -60,8 +61,8 @@
   }
 
   async function start(hint) {
-    if (recording) return;
-    chunks = []; samples = 0;
+    if (recording || opening) return;
+    chunks = []; samples = 0; pending = null; opening = true;
     view('rec', 'Escuchando…', hint);
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -79,8 +80,14 @@
       src.connect(node);
       node.connect(ctx.destination);
       recording = true;
+      opening = false;
       maxTimer = setTimeout(() => stop(), MAX_MS);
+      if (pending === 'stop') stop();
+      else if (pending === 'cancel') cancel();
+      pending = null;
     } catch (err) {
+      opening = false;
+      pending = null;
       release();
       window.dictation.failed(err && err.name === 'NotAllowedError' ? 'Acta no tiene permiso para usar el micrófono.' : `No puedo abrir el micrófono (${err && err.message || err}).`);
     }
@@ -96,6 +103,7 @@
   }
 
   function stop() {
+    if (opening) { pending = 'stop'; view('busy', 'Transcribiendo…'); return; }
     if (!recording) return;
     release();
     const pcm = new Int16Array(samples);
@@ -108,12 +116,16 @@
     window.dictation.audio(pcm.buffer);
   }
 
-  function cancel() { release(); chunks = []; }
+  function cancel() {
+    if (opening) { pending = 'cancel'; return; }
+    release(); chunks = [];
+  }
 
   window.dictation.onCommand((cmd, data) => {
     if (cmd === 'start') start(data && data.hint);
     else if (cmd === 'stop') stop();
     else if (cmd === 'cancel') cancel();
+    else if (cmd === 'hint') $('hint').textContent = data && data.hint || '';
     else if (cmd === 'busy') view('busy', data && data.text || 'Transcribiendo…');
     else if (cmd === 'message') view(data && data.error ? 'error' : 'done', data && data.text || '', data && data.hint);
   });

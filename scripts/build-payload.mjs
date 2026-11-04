@@ -35,6 +35,7 @@ fs.cpSync(path.join(root, 'web', 'dist'), path.join(payload, 'web', 'dist'), { r
 for (const file of ['main.cjs', 'preload.cjs', 'dictation.cjs', 'dictation-preload.cjs', 'dictation.html', 'Info.plist']) {
   fs.copyFileSync(path.join(root, 'electron', file), path.join(payload, 'electron', file));
 }
+fs.cpSync(path.join(root, 'electron', 'tray'), path.join(payload, 'electron', 'tray'), { recursive: true });
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 fs.writeFileSync(path.join(payload, 'package.json'), JSON.stringify({

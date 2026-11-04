@@ -34,6 +34,8 @@ let server = null;
 let quitting = false;
 let recording = null;
 let dictation = null;
+let toldAboutTray = false;
+let cleanedUp = false;
 const instance = crypto.randomBytes(8).toString('hex');
 
 function probe() {
@@ -83,6 +85,7 @@ async function ensureServer() {
       ACTA_RESOURCES: root,
       ACTA_ELECTRON_EXEC: process.execPath,
       ACTA_INSTANCE: instance,
+      ACTA_PARENT_PID: String(process.pid),
     };
   } else {
     cmd = findNode();
@@ -92,7 +95,7 @@ async function ensureServer() {
     }
     const built = fs.existsSync(path.join(root, 'web', 'dist', 'index.html'));
     args = [path.join(root, 'server', 'index.ts'), ...(built ? [] : ['--dev'])];
-    env = { ...process.env, ACTA_PORT: String(PORT), ACTA_INSTANCE: instance };
+    env = { ...process.env, ACTA_PORT: String(PORT), ACTA_INSTANCE: instance, ACTA_PARENT_PID: String(process.pid) };
   }
 
   server = spawn(cmd, args, { cwd: root, env, stdio: ['ignore', logFile, logFile] });
@@ -131,7 +134,14 @@ function createWindow() {
   });
   win.on('close', (e) => {
     // Closing the window keeps Acta in the menu bar (meeting detection keeps working).
-    if (!quitting) { e.preventDefault(); win.hide(); }
+    if (!quitting) {
+      e.preventDefault();
+      win.hide();
+      if (process.platform === 'win32' && !toldAboutTray) {
+        toldAboutTray = true;
+        new Notification({ title: 'Acta sigue abierta', body: 'Está junto al reloj para avisarte de las reuniones y para el dictado. Para cerrarla del todo: clic derecho en su icono → Salir de Acta.' }).show();
+      }
+    }
   });
 }
 
@@ -158,6 +168,12 @@ async function newNote(record) {
 
 function trayIcon(active) {
   const mac = process.platform === 'darwin';
+  if (process.platform === 'win32') {
+    // Windows can't build a tray icon from an SVG data URL (the icon silently never
+    // appears, and with it the only "Salir de Acta"), so use the bundled PNGs.
+    const dark = nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? nativeTheme.shouldUseDarkColors;
+    return nativeImage.createFromPath(path.join(__dirname, 'tray', `tray-${dark ? 'light' : 'dark'}-${active ? 'rec' : 'idle'}.png`));
+  }
   const fill = mac ? '#000' : '#1d1d1c';
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><path d="M8 29 16.6 7h2.8L28 29h-4.2l-2-5.4h-7.6l-2 5.4Zm7.4-9h5.2L18 12.8Z" fill="${fill}"/>${active ? `<circle cx="30" cy="7" r="5" fill="${fill}"/>` : ''}</svg>`;
   const img = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`).resize({ width: 18, height: 18 });
@@ -173,7 +189,7 @@ function refreshTray() {
     ...(recording ? [{ label: 'Transcribiendo… abrir nota', click: () => show(`/nota/${recording}`) }, { type: 'separator' }] : []),
     { label: 'Nueva nota y transcribir', accelerator: 'CommandOrControl+Shift+N', click: () => void newNote(true) },
     { label: 'Nueva nota', click: () => void newNote(false) },
-    ...(dictation?.shortcut ? [{ label: 'Dictar en cualquier app', accelerator: dictation.shortcut, click: () => dictation.toggle() }] : []),
+    ...(dictation ? [{ label: 'Dictar en cualquier app', ...(dictation.shortcut ? { accelerator: dictation.shortcut } : {}), click: () => dictation.toggle() }] : []),
     { label: 'Abrir Acta', click: () => show() },
     { label: 'Pregunta a Acta', click: () => show('/preguntar') },
     { type: 'separator' },
@@ -215,6 +231,7 @@ app.whenReady().then(async () => {
   createWindow();
   tray = new Tray(trayIcon(false));
   refreshTray();
+  nativeTheme.on('updated', () => refreshTray());
   if (process.platform === 'win32') tray.on('click', () => show());
   watchEvents();
   globalShortcut.register('CommandOrControl+Shift+N', () => void newNote(true));
@@ -261,11 +278,40 @@ function installWindowsLoopback() {
   });
 }
 
-app.on('before-quit', () => {
-  quitting = true;
-  globalShortcut.unregisterAll();
-  if (server) {
-    if (process.platform === 'win32') server.kill();
-    else server.kill('SIGTERM');
+function postJson(pathname, body, timeoutMs) {
+  return new Promise((resolve) => {
+    const data = JSON.stringify(body);
+    const req = http.request(`${URL}${pathname}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => { res.resume(); res.on('end', resolve); });
+    req.on('error', resolve);
+    req.setTimeout(timeoutMs, () => { req.destroy(); resolve(); });
+    req.end(data);
+  });
+}
+
+function killServer() {
+  if (!server) return;
+  if (process.platform === 'win32') {
+    // kill() only ends the server itself; its children (meeting detector, ffmpeg) would
+    // stay behind. taskkill /T takes the whole tree.
+    try { execFileSync('taskkill', ['/pid', String(server.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); }
+    catch { try { server.kill(); } catch { /* already gone */ } }
+  } else {
+    server.kill('SIGTERM');
   }
+  server = null;
+}
+
+app.on('before-quit', (e) => {
+  quitting = true;
+  if (cleanedUp) return;
+  e.preventDefault();
+  cleanedUp = true;
+  globalShortcut.unregisterAll();
+  dictation?.dispose();
+  void (async () => {
+    // Close an open recording properly before the server goes away.
+    if (recording) await postJson(`/api/meetings/${recording}/record`, { action: 'stop' }, 4000);
+    killServer();
+    app.quit();
+  })();
 });

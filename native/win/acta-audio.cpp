@@ -5,6 +5,7 @@
 //   acta-audio.exe detect [--interval S]
 //   acta-audio.exe check | devices | request | events | capture
 //   acta-audio.exe paste   (dictation: sends Ctrl+V to the focused window)
+//   acta-audio.exe hotkey  (dictation: reports Ctrl+Win down/up as JSON lines)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -282,6 +283,78 @@ static int sendPaste() {
   return 0;
 }
 
+// Dictation hotkey made only of modifiers (Ctrl + Windows), which RegisterHotKey and
+// Electron's globalShortcut can't express. A low-level keyboard hook prints:
+//   {"hotkey":"down"}    Ctrl and Win are both held, nothing else pressed
+//   {"hotkey":"up"}      one of them was released
+//   {"hotkey":"cancel"}  another key joined (Ctrl+Win+D, Ctrl+Win+→…): leave it to Windows
+// When the combo fires we inject an unassigned key so that letting go of Win does not
+// open the Start menu.
+static bool g_ctrl[2] = { false, false };
+static bool g_win[2] = { false, false };
+static bool g_active = false;   // combo is down and reported
+static bool g_spoiled = false;  // another key was pressed during this combo
+
+static void emitHotkey(const char* what) {
+  printf("{\"hotkey\":\"%s\"}\n", what);
+  fflush(stdout);
+}
+
+static void maskStartMenu() {
+  INPUT in[2] = {};
+  in[0].type = in[1].type = INPUT_KEYBOARD;
+  in[0].ki.wVk = in[1].ki.wVk = 0xE8;  // unassigned virtual key
+  in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+  SendInput(2, in, sizeof(INPUT));
+}
+
+static LRESULT CALLBACK hotkeyHook(int nCode, WPARAM wParam, LPARAM lParam) {
+  if (nCode == HC_ACTION) {
+    const KBDLLHOOKSTRUCT* k = (const KBDLLHOOKSTRUCT*)lParam;
+    if (!(k->flags & LLKHF_INJECTED)) {
+      const bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
+      const DWORD vk = k->vkCode;
+      bool isMod = true;
+      if (vk == VK_LCONTROL || vk == VK_RCONTROL || vk == VK_CONTROL) g_ctrl[vk == VK_RCONTROL] = down;
+      else if (vk == VK_LWIN || vk == VK_RWIN) g_win[vk == VK_RWIN] = down;
+      else isMod = false;
+      const bool both = (g_ctrl[0] || g_ctrl[1]) && (g_win[0] || g_win[1]);
+      if (!isMod && down && (both || g_active)) {
+        if (g_active) emitHotkey("cancel");
+        g_active = false;
+        g_spoiled = true;
+      } else if (isMod) {
+        if (both && !g_active && !g_spoiled) {
+          g_active = true;
+          maskStartMenu();
+          emitHotkey("down");
+        } else if (!both) {
+          if (g_active) emitHotkey("up");
+          g_active = false;
+          if (!(g_ctrl[0] || g_ctrl[1]) && !(g_win[0] || g_win[1])) g_spoiled = false;
+        }
+      }
+    }
+  }
+  return CallNextHookEx(nullptr, nCode, wParam, lParam);
+}
+
+static int runHotkey() {
+  HHOOK hook = SetWindowsHookExW(WH_KEYBOARD_LL, hotkeyHook, GetModuleHandleW(nullptr), 0);
+  if (!hook) {
+    fprintf(stderr, "SetWindowsHookEx: %lu\n", GetLastError());
+    return 1;
+  }
+  printLine("{\"hotkey\":\"ready\"}");
+  MSG msg;
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+  UnhookWindowsHookEx(hook);
+  return 0;
+}
+
 static std::wstring argAt(int argc, wchar_t** argv, int i) { return i < argc ? argv[i] : L""; }
 
 int main() {
@@ -308,11 +381,13 @@ int main() {
     printLine("{}");
   } else if (cmd == L"paste") {
     code = sendPaste();
+  } else if (cmd == L"hotkey") {
+    code = runHotkey();
   } else if (cmd == L"capture") {
     fprintf(stderr, "En Windows el audio lo captura la ventana de Acta, no este programa.\n");
     code = 2;
   } else {
-    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events|paste\n");
+    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events|paste|hotkey\n");
     code = 2;
   }
   LocalFree(argv);

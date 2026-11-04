@@ -37,7 +37,13 @@ const KEY_DEFS = [
 ] as const;
 
 const DICTATION_SHORTCUTS = ['CommandOrControl+Shift+Space', 'CommandOrControl+Alt+Space', 'CommandOrControl+Shift+D', 'Alt+Shift+D', 'F9'];
+// Ctrl + Windows is read by acta-audio.exe's keyboard hook, so it only exists on Windows.
+const CTRL_WIN = 'CtrlWin';
+function dictationShortcuts(platform?: string) {
+  return platform === 'win32' ? [CTRL_WIN, ...DICTATION_SHORTCUTS] : DICTATION_SHORTCUTS;
+}
 function shortcutLabel(acc: string, platform?: string) {
+  if (acc === CTRL_WIN) return 'Ctrl + Windows (mantener para hablar)';
   const mac = platform === 'darwin';
   return acc
     .replace('CommandOrControl', mac ? '⌘' : 'Ctrl')
@@ -141,9 +147,11 @@ export function SettingsPage() {
 
       <Card id="dictado" title="Dictado" desc="Escribe hablando en cualquier aplicación: pulsa el atajo, habla y vuelve a pulsarlo. El texto aparece donde esté el cursor. Esc cancela.">
         <Row label="Dictar en cualquier app"><Toggle checked={s.dictationEnabled} onChange={(v) => void save({ dictationEnabled: v })} /></Row>
-        <Row label="Atajo" hint="El mismo atajo empieza y termina el dictado.">
+        <Row label="Atajo" hint={s.dictationShortcut === CTRL_WIN
+          ? 'Mantén Ctrl + Windows mientras hablas y suelta para pegar. Con un toque corto se queda escuchando hasta el siguiente toque.'
+          : 'El mismo atajo empieza y termina el dictado.'}>
           <Select value={s.dictationShortcut} disabled={!s.dictationEnabled} onChange={(e) => void save({ dictationShortcut: e.target.value })}>
-            {DICTATION_SHORTCUTS.map((a) => <option key={a} value={a}>{shortcutLabel(a, state?.platform)}</option>)}
+            {dictationShortcuts(state?.platform).map((a) => <option key={a} value={a}>{shortcutLabel(a, state?.platform)}</option>)}
           </Select>
         </Row>
         <Row label="Repasar el texto con IA" hint="Quita muletillas y repeticiones, y pone puntuación. Usa el modelo más rápido que tengas configurado.">
