@@ -71,10 +71,24 @@ function createDictation({ baseUrl, helperBin, onState }) {
 
   let starting = null;
 
+  let target = { exe: '', title: '' };
+
+  // Which app the text is for. Asked at the start, while that app still has the focus.
+  function readForeground() {
+    return new Promise((resolve) => {
+      if (process.platform !== 'win32' || !fs.existsSync(helperBin)) { resolve({ exe: '', title: '' }); return; }
+      execFile(helperBin, ['foreground'], { windowsHide: true, timeout: 1500 }, (err, stdout) => {
+        try { resolve(err ? { exe: '', title: '' } : JSON.parse(String(stdout).trim())); } catch { resolve({ exe: '', title: '' }); }
+      });
+    });
+  }
+
   function start(hint) {
     if (state !== 'idle') return starting;
     clearTimeout(hideTimer);
     setState('recording');
+    target = { exe: '', title: '' };
+    if (settings.dictationAppStyle !== false) void readForeground().then((t) => { target = t; });
     starting = (async () => {
       await ensurePill();
       place();
@@ -171,7 +185,13 @@ function createDictation({ baseUrl, helperBin, onState }) {
   function postPcm(buf) {
     return new Promise((resolve, reject) => {
       const body = Buffer.from(buf);
-      const req = http.request(`${baseUrl}/api/dictate`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': body.length } }, (res) => {
+      const headers = {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': body.length,
+        'X-App-Exe': encodeURIComponent(target.exe || ''),
+        'X-App-Title': encodeURIComponent((target.title || '').slice(0, 200)),
+      };
+      const req = http.request(`${baseUrl}/api/dictate`, { method: 'POST', headers }, (res) => {
         let d = '';
         res.setEncoding('utf8');
         res.on('data', (c) => (d += c));

@@ -18,7 +18,7 @@ import { upcomingEvents, calendarErrors, clearCalendarCache, type CalEvent } fro
 import { detectorState, startDetector, startCalendarWatcher, stopDetector } from './detector.ts';
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
 import { providerAvailable } from './llm.ts';
-import { dictate, dictationSettings } from './dictation.ts';
+import { dictate, dictationSettings, DICTATION_SETTING_KEYS } from './dictation.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
@@ -169,7 +169,7 @@ app.put('/api/settings', ah((req) => {
   const b = req.body || {};
   const simple = ['userName', 'selfEmails', 'language', 'vocabulary', 'sttProvider', 'openaiSttModel', 'echoCancellation', 'saveAudio', 'autoDetect',
     'autoStopMinutes', 'autoStopOnMeetingEnd', 'autoEnhance', 'calendarNotifyMinutes', 'calendars', 'macCalendarEnabled', 'claudeCliEnabled',
-    'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers', 'dictationEnabled', 'dictationShortcut', 'dictationCleanup'];
+    'models', 'integrations', 'onboarded', 'localWhisperModel', 'micDeviceUID', 'identifySpeakers', ...DICTATION_SETTING_KEYS];
   for (const k of simple) if (k in b) setSetting(k, b[k]);
   if (b.keys) {
     const cur = getSetting<Record<string, string>>('apiKeys', {});
@@ -181,7 +181,7 @@ app.put('/api/settings', ah((req) => {
     setSetting('apiKeys', cur);
   }
   if ('calendars' in b || 'macCalendarEnabled' in b) clearCalendarCache();
-  if (['dictationEnabled', 'dictationShortcut', 'dictationCleanup'].some((k) => k in b)) bus.emit('event', { type: 'dictation.settings', ...dictationSettings() });
+  if (DICTATION_SETTING_KEYS.some((k) => k in b)) bus.emit('event', { type: 'dictation.settings', ...dictationSettings() });
   return { ok: true };
 }));
 
@@ -529,7 +529,8 @@ app.post('/api/dictate', express.raw({ type: 'application/octet-stream', limit: 
   if (!Buffer.isBuffer(buf) || buf.length < 2) return { text: '', raw: '', durationMs: 0, cleaned: false, ms: 0 };
   const bytes = new Uint8Array(buf.byteLength - (buf.byteLength % 2));
   bytes.set(buf.subarray(0, bytes.length));
-  return dictate(new Int16Array(bytes.buffer));
+  const header = (h: string) => { try { return decodeURIComponent(String(req.headers[h] || '')).slice(0, 300); } catch { return ''; } };
+  return dictate(new Int16Array(bytes.buffer), { exe: header('x-app-exe'), title: header('x-app-title') });
 }));
 app.get('/api/dictation', ah(() => dictationSettings()));
 

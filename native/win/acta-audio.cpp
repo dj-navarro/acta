@@ -6,6 +6,7 @@
 //   acta-audio.exe check | devices | request | events | capture
 //   acta-audio.exe paste   (dictation: sends Ctrl+V to the focused window)
 //   acta-audio.exe hotkey  (dictation: reports Ctrl+Win down/up as JSON lines)
+//   acta-audio.exe foreground  (dictation: exe and title of the focused window)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -355,6 +356,28 @@ static int runHotkey() {
   return 0;
 }
 
+// Dictation: which app will receive the text, so the clean-up can match its style.
+//   {"exe":"outlook.exe","title":"Bandeja de entrada - ..."}
+static int printForeground() {
+  HWND hwnd = GetForegroundWindow();
+  std::wstring exe, title;
+  if (hwnd) {
+    wchar_t buf[512] = {};
+    GetWindowTextW(hwnd, buf, 511);
+    title = buf;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+      wchar_t path[MAX_PATH * 2] = {};
+      DWORD n = MAX_PATH * 2;
+      if (QueryFullProcessImageNameW(h, 0, path, &n)) exe = fileName(path);
+      CloseHandle(h);
+    }
+  }
+  printLine("{\"exe\":\"" + jsonEscape(utf8(exe)) + "\",\"title\":\"" + jsonEscape(utf8(title)) + "\"}");
+  return 0;
+}
+
 static std::wstring argAt(int argc, wchar_t** argv, int i) { return i < argc ? argv[i] : L""; }
 
 int main() {
@@ -383,11 +406,13 @@ int main() {
     code = sendPaste();
   } else if (cmd == L"hotkey") {
     code = runHotkey();
+  } else if (cmd == L"foreground") {
+    code = printForeground();
   } else if (cmd == L"capture") {
     fprintf(stderr, "En Windows el audio lo captura la ventana de Acta, no este programa.\n");
     code = 2;
   } else {
-    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events|paste|hotkey\n");
+    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events|paste|hotkey|foreground\n");
     code = 2;
   }
   LocalFree(argv);

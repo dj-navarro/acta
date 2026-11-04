@@ -154,8 +154,17 @@ export function SettingsPage() {
             {dictationShortcuts(state?.platform).map((a) => <option key={a} value={a}>{shortcutLabel(a, state?.platform)}</option>)}
           </Select>
         </Row>
-        <Row label="Repasar el texto con IA" hint="Quita muletillas y repeticiones, y pone puntuación. Usa el modelo más rápido que tengas configurado.">
+        <Row label="Repasar el texto con IA" hint="Quita muletillas y repeticiones, corrige palabras mal oídas por el contexto y pone puntuación.">
           <Toggle checked={s.dictationCleanup} onChange={(v) => void save({ dictationCleanup: v })} />
+        </Row>
+        <Row label="Modelo del repaso" hint="Uno más potente corrige mejor las palabras difíciles, pero tarda un poco más en pegar.">
+          <Select value={s.dictationModel || ''} disabled={!s.dictationCleanup} onChange={(e) => void save({ dictationModel: e.target.value })}>
+            <option value="">Automático (el más rápido)</option>
+            {(state?.models || []).map((m) => <option key={m.id} value={m.id} disabled={!m.available}>{m.label} · {m.speed}{m.available ? '' : ' (sin clave)'}</option>)}
+          </Select>
+        </Row>
+        <Row label="Adaptar el estilo a la app" hint="Más cuidado en un correo, más breve en un chat, exacto en un editor de código. Al modelo solo le llega el tipo de app, nunca el título de la ventana.">
+          <Toggle checked={s.dictationAppStyle} onChange={(v) => void save({ dictationAppStyle: v })} />
         </Row>
         <div className="px-5 py-3 text-[12px] text-ink-4">Usa el motor, el idioma y el vocabulario de «Transcripción». El audio del dictado no se guarda.</div>
       </Card>
