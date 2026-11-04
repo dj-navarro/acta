@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const { createDictation } = require('./dictation.cjs');
 
 const PACKAGED = app.isPackaged;
 const PORT = Number(process.env.ACTA_PORT || (PACKAGED ? 47331 : 4848));
@@ -32,6 +33,7 @@ let tray = null;
 let server = null;
 let quitting = false;
 let recording = null;
+let dictation = null;
 const instance = crypto.randomBytes(8).toString('hex');
 
 function probe() {
@@ -171,6 +173,7 @@ function refreshTray() {
     ...(recording ? [{ label: 'Transcribiendo… abrir nota', click: () => show(`/nota/${recording}`) }, { type: 'separator' }] : []),
     { label: 'Nueva nota y transcribir', accelerator: 'CommandOrControl+Shift+N', click: () => void newNote(true) },
     { label: 'Nueva nota', click: () => void newNote(false) },
+    ...(dictation?.shortcut ? [{ label: 'Dictar en cualquier app', accelerator: dictation.shortcut, click: () => dictation.toggle() }] : []),
     { label: 'Abrir Acta', click: () => show() },
     { label: 'Pregunta a Acta', click: () => show('/preguntar') },
     { type: 'separator' },
@@ -192,6 +195,7 @@ function watchEvents() {
         if (e.type === 'recording.status' && (e.status === 'recording' || e.status === 'paused')) { if (recording !== e.meetingId) { recording = e.meetingId; refreshTray(); } }
         if (e.type === 'recording.stopped') { recording = null; refreshTray(); }
         if (e.type === 'google.connected' || e.type === 'google.error') show();
+        if (e.type === 'dictation.settings' && dictation) { dictation.apply(e); refreshTray(); }
       } catch { /* binary audio frames */ }
     });
     ws.addEventListener('close', () => { if (!quitting) setTimeout(connect, 2000); });
@@ -214,6 +218,9 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') tray.on('click', () => show());
   watchEvents();
   globalShortcut.register('CommandOrControl+Shift+N', () => void newNote(true));
+  const helperBin = path.join(resourcesRoot(), 'bin', process.platform === 'win32' ? 'acta-audio.exe' : 'acta-audio');
+  dictation = createDictation({ baseUrl: URL, helperBin });
+  dictation.init().then(() => refreshTray()).catch((err) => console.error('dictation', err));
   const appMenu = Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { label: 'Archivo', submenu: [

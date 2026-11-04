@@ -10,7 +10,8 @@ const payload = path.join(root, 'dist', 'payload');
 fs.rmSync(payload, { recursive: true, force: true });
 fs.mkdirSync(path.join(payload, 'electron'), { recursive: true });
 
-const vite = spawnSync('npx', ['vite', 'build'], { stdio: 'inherit', cwd: root, shell: process.platform === 'win32' });
+// Run Vite's own CLI with this Node: works with npm or pnpm, and without npx on PATH.
+const vite = spawnSync(process.execPath, [path.join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], { stdio: 'inherit', cwd: root });
 if (vite.status !== 0) process.exit(vite.status ?? 1);
 
 await esbuild.build({
@@ -31,7 +32,7 @@ await esbuild.build({
 });
 
 fs.cpSync(path.join(root, 'web', 'dist'), path.join(payload, 'web', 'dist'), { recursive: true });
-for (const file of ['main.cjs', 'preload.cjs', 'Info.plist']) {
+for (const file of ['main.cjs', 'preload.cjs', 'dictation.cjs', 'dictation-preload.cjs', 'dictation.html', 'Info.plist']) {
   fs.copyFileSync(path.join(root, 'electron', file), path.join(payload, 'electron', file));
 }
 

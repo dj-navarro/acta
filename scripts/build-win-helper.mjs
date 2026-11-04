@@ -33,8 +33,9 @@ if (process.platform === 'win32') {
   if (!install) fail('No hay un Visual Studio con las herramientas de C++ para x64.');
   const vcvars = path.join(install, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
   if (!fs.existsSync(vcvars)) fail(`No está ${vcvars}`);
-  const cmd = `call "${vcvars}" && cl /nologo /EHsc /O2 /std:c++17 /DUNICODE /D_UNICODE /Fe:"${out}" "${src}" /link ole32.lib uuid.lib oleaut32.lib psapi.lib shell32.lib`;
-  run('cmd.exe', ['/d', '/s', '/c', cmd]);
+  const cmd = `call "${vcvars}" && cl /nologo /EHsc /O2 /std:c++17 /DUNICODE /D_UNICODE /Fe:"${out}" "${src}" /link ole32.lib uuid.lib oleaut32.lib psapi.lib shell32.lib user32.lib`;
+  // Verbatim: Node would otherwise escape the inner quotes and cmd.exe can't find vcvars64.bat.
+  run('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], { windowsVerbatimArguments: true });
 } else {
   const gxx = 'x86_64-w64-mingw32-g++';
   const which = spawnSync('command', ['-v', gxx], { shell: true, encoding: 'utf8' });
@@ -48,7 +49,7 @@ if (process.platform === 'win32') {
   run(gxx, [
     '-std=c++17', '-O2', '-static-libgcc', '-static-libstdc++', '-s',
     '-o', out, src,
-    '-lole32', '-luuid', '-loleaut32', '-lpsapi', '-lshell32',
+    '-lole32', '-luuid', '-loleaut32', '-lpsapi', '-lshell32', '-luser32',
   ]);
 }
 

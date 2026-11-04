@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Acta · dictado</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  body { display: flex; align-items: center; justify-content: center; font: 500 13px/1.2 "Segoe UI", -apple-system, system-ui, sans-serif; }
+  .pill { display: flex; align-items: center; gap: 10px; padding: 9px 16px 9px 12px; border-radius: 999px;
+    background: rgba(29, 29, 28, .94); color: #fcfcf8; box-shadow: 0 6px 24px rgba(0,0,0,.28); border: 1px solid rgba(255,255,255,.08); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; flex: none; }
+  .bars { display: flex; align-items: center; gap: 2px; height: 18px; }
+  .bars i { width: 3px; border-radius: 2px; background: #fcfcf8; height: 3px; transition: height .08s; }
+  .hint { color: rgba(252,252,248,.55); font-weight: 400; font-size: 12px; }
+  .spin { width: 12px; height: 12px; border: 2px solid rgba(252,252,248,.25); border-top-color: #fcfcf8; border-radius: 50%; animation: s .7s linear infinite; flex: none; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  [hidden] { display: none !important; }
+  .error .dot { background: #f5a524; }
+</style>
+</head>
+<body>
+<div class="pill" id="pill">
+  <span class="dot" id="dot"></span><span class="spin" id="spin" hidden></span>
+  <span class="bars" id="bars"></span>
+  <span id="label">Escuchando…</span>
+  <span class="hint" id="hint"></span>
+</div>
+<script>
+  const SAMPLE_RATE = 16000;
+  const MAX_MS = 10 * 60 * 1000;
+  const $ = (id) => document.getElementById(id);
+  const bars = $('bars');
+  for (let i = 0; i < 9; i++) bars.appendChild(document.createElement('i'));
+
+  let stream = null, ctx = null, node = null, chunks = [], samples = 0, recording = false, maxTimer = null;
+
+  function view(state, text, hint) {
+    $('pill').classList.toggle('error', state === 'error');
+    $('dot').hidden = state === 'busy';
+    $('spin').hidden = state !== 'busy';
+    bars.hidden = state !== 'rec';
+    $('label').textContent = text;
+    $('hint').textContent = hint || '';
+  }
+
+  function level(buf) {
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.min(1, Math.sqrt(sum / buf.length) * 6);
+    const els = bars.children;
+    for (let i = 0; i < els.length; i++) {
+      const shape = 1 - Math.abs(i - (els.length - 1) / 2) / els.length;
+      els[i].style.height = `${3 + Math.round(15 * rms * shape * (0.7 + Math.random() * 0.3))}px`;
+    }
+  }
+
+  async function start(hint) {
+    if (recording) return;
+    chunks = []; samples = 0;
+    view('rec', 'Escuchando…', hint);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      // Chromium resamples the mic to the context rate, so we get 16 kHz directly.
+      ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const src = ctx.createMediaStreamSource(stream);
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (e) => {
+        if (!recording) return;
+        const f = e.inputBuffer.getChannelData(0);
+        chunks.push(new Float32Array(f));
+        samples += f.length;
+        level(f);
+      };
+      src.connect(node);
+      node.connect(ctx.destination);
+      recording = true;
+      maxTimer = setTimeout(() => stop(), MAX_MS);
+    } catch (err) {
+      release();
+      window.dictation.failed(err && err.name === 'NotAllowedError' ? 'Acta no tiene permiso para usar el micrófono.' : `No puedo abrir el micrófono (${err && err.message || err}).`);
+    }
+  }
+
+  function release() {
+    recording = false;
+    clearTimeout(maxTimer);
+    try { node && node.disconnect(); } catch {}
+    try { ctx && ctx.close(); } catch {}
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = ctx = node = null;
+  }
+
+  function stop() {
+    if (!recording) return;
+    release();
+    const pcm = new Int16Array(samples);
+    let o = 0;
+    for (const c of chunks) {
+      for (let i = 0; i < c.length; i++) { const v = Math.max(-1, Math.min(1, c[i])); pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7fff; }
+    }
+    chunks = [];
+    view('busy', 'Transcribiendo…');
+    window.dictation.audio(pcm.buffer);
+  }
+
+  function cancel() { release(); chunks = []; }
+
+  window.dictation.onCommand((cmd, data) => {
+    if (cmd === 'start') start(data && data.hint);
+    else if (cmd === 'stop') stop();
+    else if (cmd === 'cancel') cancel();
+    else if (cmd === 'busy') view('busy', data && data.text || 'Transcribiendo…');
+    else if (cmd === 'message') view(data && data.error ? 'error' : 'done', data && data.text || '', data && data.hint);
+  });
+  window.dictation.ready();
+</script>
+</body>
+</html>

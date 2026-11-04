@@ -4,6 +4,7 @@
 //
 //   acta-audio.exe detect [--interval S]
 //   acta-audio.exe check | devices | request | events | capture
+//   acta-audio.exe paste   (dictation: sends Ctrl+V to the focused window)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -252,6 +253,35 @@ static void printDetect() {
   printLine(json);
 }
 
+// Dictation: the shell has already put the text on the clipboard. First let go of any
+// modifier the user may still be holding from the shortcut (Shift+V would type a "V"),
+// then press Ctrl+V in whatever window has the focus.
+static void keyEvent(std::vector<INPUT>& in, WORD vk, bool up) {
+  INPUT i = {};
+  i.type = INPUT_KEYBOARD;
+  i.ki.wVk = vk;
+  i.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+  if (vk == VK_RWIN || vk == VK_LWIN || vk == VK_RMENU || vk == VK_RCONTROL) i.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+  in.push_back(i);
+}
+
+static int sendPaste() {
+  std::vector<INPUT> in;
+  const WORD held[] = { VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN, VK_LCONTROL, VK_RCONTROL };
+  for (WORD vk : held) if (GetAsyncKeyState(vk) & 0x8000) keyEvent(in, vk, true);
+  keyEvent(in, VK_CONTROL, false);
+  keyEvent(in, 'V', false);
+  keyEvent(in, 'V', true);
+  keyEvent(in, VK_CONTROL, true);
+  const UINT sent = SendInput((UINT)in.size(), in.data(), sizeof(INPUT));
+  if (sent != in.size()) {
+    fprintf(stderr, "SendInput: %lu\n", GetLastError());
+    return 1;
+  }
+  printLine("{\"ok\":true}");
+  return 0;
+}
+
 static std::wstring argAt(int argc, wchar_t** argv, int i) { return i < argc ? argv[i] : L""; }
 
 int main() {
@@ -276,11 +306,13 @@ int main() {
     printLine("[]");
   } else if (cmd == L"request") {
     printLine("{}");
+  } else if (cmd == L"paste") {
+    code = sendPaste();
   } else if (cmd == L"capture") {
     fprintf(stderr, "En Windows el audio lo captura la ventana de Acta, no este programa.\n");
     code = 2;
   } else {
-    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events\n");
+    fprintf(stderr, "uso: acta-audio detect|check|devices|request|events|paste\n");
     code = 2;
   }
   LocalFree(argv);

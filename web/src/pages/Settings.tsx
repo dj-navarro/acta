@@ -36,6 +36,17 @@ const KEY_DEFS = [
   { id: 'ANTHROPIC_API_KEY', label: 'Anthropic', hint: 'Solo notas y chat.', href: 'https://console.anthropic.com/settings/keys', link: 'Crear clave' },
 ] as const;
 
+const DICTATION_SHORTCUTS = ['CommandOrControl+Shift+Space', 'CommandOrControl+Alt+Space', 'CommandOrControl+Shift+D', 'Alt+Shift+D', 'F9'];
+function shortcutLabel(acc: string, platform?: string) {
+  const mac = platform === 'darwin';
+  return acc
+    .replace('CommandOrControl', mac ? '⌘' : 'Ctrl')
+    .replace('Alt', mac ? '⌥' : 'Alt')
+    .replace('Shift', mac ? '⇧' : 'Mayús')
+    .replace('Space', 'Espacio')
+    .split('+').join(mac ? '' : ' + ');
+}
+
 export function SettingsPage() {
   const { state, refreshState } = useApp();
   const loc = useLocation();
@@ -126,6 +137,19 @@ export function SettingsPage() {
         )}
         <Row label="Cancelación de eco" hint="Actívala si usas altavoces. Con auriculares no hace falta."><Toggle checked={s.echoCancellation} onChange={(v) => void save({ echoCancellation: v })} /></Row>
         <Row label="Guardar el audio" hint="Granola no guarda audio. Si lo activas, Acta guarda un .m4a de cada reunión."><Toggle checked={s.saveAudio} onChange={(v) => void save({ saveAudio: v })} /></Row>
+      </Card>
+
+      <Card id="dictado" title="Dictado" desc="Escribe hablando en cualquier aplicación: pulsa el atajo, habla y vuelve a pulsarlo. El texto aparece donde esté el cursor. Esc cancela.">
+        <Row label="Dictar en cualquier app"><Toggle checked={s.dictationEnabled} onChange={(v) => void save({ dictationEnabled: v })} /></Row>
+        <Row label="Atajo" hint="El mismo atajo empieza y termina el dictado.">
+          <Select value={s.dictationShortcut} disabled={!s.dictationEnabled} onChange={(e) => void save({ dictationShortcut: e.target.value })}>
+            {DICTATION_SHORTCUTS.map((a) => <option key={a} value={a}>{shortcutLabel(a, state?.platform)}</option>)}
+          </Select>
+        </Row>
+        <Row label="Repasar el texto con IA" hint="Quita muletillas y repeticiones, y pone puntuación. Usa el modelo más rápido que tengas configurado.">
+          <Toggle checked={s.dictationCleanup} onChange={(v) => void save({ dictationCleanup: v })} />
+        </Row>
+        <div className="px-5 py-3 text-[12px] text-ink-4">Usa el motor, el idioma y el vocabulario de «Transcripción». El audio del dictado no se guarda.</div>
       </Card>
 
       <Card id="ia" title="Inteligencia artificial" desc="Elige qué modelo escribe tus notas y cuál responde en el chat.">
