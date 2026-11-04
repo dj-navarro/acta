@@ -17,7 +17,7 @@ export const STT_CATALOG: { id: SttProvider; label: string; detail: string }[] =
   { id: 'groq', label: 'Groq · Whisper large v3 turbo', detail: 'Muy rápido y barato. Excelente en español.' },
   { id: 'openai', label: 'OpenAI · gpt-4o-transcribe', detail: 'La mejor precisión con ruido y acentos.' },
   { id: 'deepgram', label: 'Deepgram · Nova-3', detail: 'El motor que usa Granola. Requiere clave de Deepgram.' },
-  { id: 'local', label: 'Local · whisper.cpp', detail: '100 % en tu Mac. Gratis y privado; algo más lento.' },
+  { id: 'local', label: 'Local · whisper.cpp', detail: '100 % en tu ordenador. Gratis y privado; algo más lento.' },
 ];
 
 export function sttAvailable(p: SttProvider) {
@@ -87,6 +87,20 @@ export function cleanTranscript(text: string) {
   return t;
 }
 
+const PROVIDER_NAME: Record<string, string> = { groq: 'Groq', openai: 'OpenAI', deepgram: 'Deepgram' };
+
+/** Turns the provider's raw error into something a person can act on. */
+export function sttErrorMessage(provider: string, status: number, body: string) {
+  const name = PROVIDER_NAME[provider] || provider;
+  // Groq answers this before looking at the key when the IP is blocked (VPNs, some countries).
+  if (status === 403 && /network settings|access denied/i.test(body)) {
+    return `${name} bloquea tu conexión (suele pasar con una VPN). Desactívala o excluye Acta de la VPN, o elige otro motor en Ajustes → Transcripción.`;
+  }
+  if (status === 401) return `${name} no acepta la clave. Revísala en Ajustes → Claves.`;
+  if (status === 429) return `${name}: has llegado al límite de uso. Espera un poco o usa otro motor.`;
+  return `${provider} STT ${status}: ${body.slice(0, 300)}`;
+}
+
 export async function transcribe(pcm: Int16Array, opts: { provider?: SttProvider; language?: string; vocabulary?: string } = {}): Promise<string> {
   const provider = opts.provider || defaultStt();
   const language = opts.language && opts.language !== 'auto' ? opts.language : undefined;
@@ -106,7 +120,7 @@ export async function transcribe(pcm: Int16Array, opts: { provider?: SttProvider
       headers: { Authorization: `Bearer ${apiKey(provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY')}` },
       body: form,
     });
-    if (!res.ok) throw new Error(`${provider} STT ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new Error(sttErrorMessage(provider, res.status, await res.text()));
     text = ((await res.json()) as any).text || '';
   } else if (provider === 'deepgram') {
     const params = new URLSearchParams({ model: 'nova-3', smart_format: 'true', punctuate: 'true' });
@@ -117,7 +131,7 @@ export async function transcribe(pcm: Int16Array, opts: { provider?: SttProvider
       headers: { Authorization: `Token ${apiKey('DEEPGRAM_API_KEY')}`, 'Content-Type': 'audio/wav' },
       body: new Uint8Array(wav),
     });
-    if (!res.ok) throw new Error(`deepgram ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new Error(sttErrorMessage('deepgram', res.status, await res.text()));
     const j: any = await res.json();
     text = j.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
   } else {

@@ -90,7 +90,7 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-[760px] space-y-6 px-8 pb-24 pt-10">
-      <PageHeader title="Ajustes" subtitle={<>Todo se guarda en tu Mac, en <code className="text-[12px]">{s.dataDir}</code>.</>} />
+      <PageHeader title="Ajustes" subtitle={<>Todo se guarda en este ordenador, en <code className="text-[12px]">{s.dataDir}</code>.</>} />
 
       <Card id="perfil" title="Tú">
         <Row label="Tu nombre" hint="Así te nombra Acta en las notas y en la transcripción.">
@@ -164,7 +164,7 @@ export function SettingsPage() {
         <Row label="Usar Claude con tu suscripción" hint="Vía Claude Code (claude -p). Sin coste por uso, algo más lento."><Toggle checked={s.claudeCliEnabled} onChange={(v) => void save({ claudeCliEnabled: v })} /></Row>
       </Card>
 
-      <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este Mac, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">
+      <Card id="claves" title="Claves" desc="Pega la clave de tu propia cuenta. Queda en la base de datos de Acta, en este ordenador, y no se comparte con nadie. Con Groq u OpenAI basta para transcribir y para las notas.">
         {KEY_DEFS.map((k) => {
           const v = s.keys[k.id] || { set: false, masked: '', source: '' };
           return (
@@ -282,7 +282,7 @@ export function SettingsPage() {
         </div>
       </Card>
 
-      <Card id="datos" title="Datos" desc="Nada sale de tu Mac salvo el audio y el texto que envías al proveedor de transcripción y de IA que elijas.">
+      <Card id="datos" title="Datos" desc="Nada sale de tu ordenador salvo el audio y el texto que envías al proveedor de transcripción y de IA que elijas.">
         <Row label="Carpeta de datos" hint={s.dataDir}><Button variant="outline" onClick={() => void api.post('/api/open-path', { path: s.dataDir })}>Abrir</Button></Row>
         <Row label="Exportaciones" hint={s.exportDir}><Button variant="outline" onClick={() => void api.post('/api/open-path', { path: s.exportDir })}>Abrir</Button></Row>
       </Card>

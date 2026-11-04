@@ -8,8 +8,8 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
-const PILL_W = 360;
-const PILL_H = 64;
+const PILL_W = 420;
+const PILL_H = 110;
 
 function createDictation({ baseUrl, helperBin, onState }) {
   let pill = null;
@@ -156,7 +156,7 @@ function createDictation({ baseUrl, helperBin, onState }) {
       setTimeout(() => restoreClipboard(saved, text), 800);
     } catch (err) {
       setState('idle');
-      message(String(err?.message || err).slice(0, 90), { error: true, ms: 4500 });
+      message(String(err?.message || err).slice(0, 220), { error: true, ms: 7000 });
     }
   });
 

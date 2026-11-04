@@ -131,7 +131,7 @@ const KEY_NAMES = ['OPENAI_API_KEY', 'GROQ_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPG
 app.get('/api/settings', ah(() => {
   const appKeys = getSetting<Record<string, string>>('apiKeys', {});
   const keys = Object.fromEntries(KEY_NAMES.map((k) => [k, {
-    set: !!apiKey(k), masked: maskKey(apiKey(k)), source: appKeys[k] ? 'guardada en este Mac' : process.env[k] ? (envSources[k] ? `leída de ${path.relative(ROOT, envSources[k]) || envSources[k]}` : 'variable de entorno') : '',
+    set: !!apiKey(k), masked: maskKey(apiKey(k)), source: appKeys[k] ? 'guardada en este ordenador' : process.env[k] ? (envSources[k] ? `leída de ${path.relative(ROOT, envSources[k]) || envSources[k]}` : 'variable de entorno') : '',
   }]));
   return {
     userName: getSetting('userName', ''),
