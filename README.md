@@ -2,6 +2,105 @@
 
 Acta escucha tus llamadas (Zoom, Meet, Teams…) sin meter un bot, las transcribe y convierte tus apuntes en notas completas con IA. Funciona en **Mac y Windows**. Todo se queda en tu ordenador: el audio y el texto solo salen hacia el proveedor de IA que tú elijas, con tu propia clave.
 
+## Esta versión: dictado, móvil como micrófono y conexión desde fuera de casa
+
+Esta rama (`jorge/dictado` de [dj-navarro/acta](https://github.com/dj-navarro/acta/tree/jorge/dictado)) añade a Acta:
+
+- **Dictado en cualquier app**, como Wispr Flow: pulsas un atajo, hablas y el texto aparece donde esté el cursor, repasado con IA y adaptado a la app (correo, chat, código…). En Windows, además, **Ctrl + Windows**: mantener para hablar y soltar para pegar.
+- **Móvil o tablet como micrófono**: escaneas un QR y grabas desde el teléfono; la transcripción aparece en el ordenador en directo. Se pueden conectar varios a la vez y cada uno sale con su nombre.
+- **Conexión desde fuera de casa**: un túnel gratuito de Cloudflare deja conectar el móvil con datos o en otra wifi.
+
+Los instaladores de la sección «Instalar» de más abajo son los de Acta original y **no traen estas funciones**. Para tenerlas hay que compilar el instalador de Windows desde esta rama. Está probado en Windows 10 y 11 de 64 bits; en Mac estas funciones no están probadas.
+
+### 1. Prepara el PC (una sola vez)
+
+| Qué | Dónde | Nota |
+|---|---|---|
+| Git | [git-scm.com](https://git-scm.com/download/win) | Trae Git Bash, que se usa en los comandos de abajo. |
+| Node.js 22 o más nuevo | [nodejs.org](https://nodejs.org) | Probado con Node 24. |
+| pnpm | `npm install -g pnpm`, o `winget install pnpm.pnpm` | Probado con pnpm 11. Esta rama se compila con pnpm, no con npm. |
+| Visual Studio 2022 Build Tools | [visualstudio.microsoft.com/downloads](https://visualstudio.microsoft.com/es/downloads/) (más abajo, «Herramientas para Visual Studio») | En el instalador marca **Desarrollo para el escritorio con C++**. Compila `acta-audio.exe` (pegar el dictado, Ctrl + Windows y detectar reuniones). |
+
+### 2. Descarga el código e instala las dependencias
+
+En **Git Bash**, dentro de una carpeta con una ruta corta (por ejemplo `C:\Users\<tu-usuario>` o `C:\dev`):
+
+```bash
+git clone -b jorge/dictado https://github.com/dj-navarro/acta.git
+cd acta
+pnpm install
+pnpm approve-builds electron esbuild '!electron-winstaller'
+```
+
+> **Truco 1 — `pnpm approve-builds`.** Es normal que `pnpm install` termine con un aviso en rojo, `ERR_PNPM_IGNORED_BUILDS`: pnpm no ejecuta por defecto los scripts de instalación de las dependencias. Electron necesita el suyo para descargar su programa y esbuild para su binario. Esa línea los autoriza (y deja fuera `electron-winstaller`, que no hace falta) y vuelve a instalarlos. Si te lo pregunta en modo interactivo, marca solo `electron` y `esbuild`.
+
+### 3. Compila el instalador
+
+Sigue en Git Bash, dentro de la carpeta `acta`:
+
+```bash
+npm_config_user_agent="pnpm/11 node/v24 win32 x64" node scripts/package-win.mjs
+```
+
+En PowerShell el mismo comando es:
+
+```powershell
+$env:npm_config_user_agent = "pnpm/11 node/v24 win32 x64"; node scripts/package-win.mjs
+```
+
+Tarda unos minutos. Hace todo seguido: compila la interfaz y el servidor, compila `acta-audio.exe` con Visual Studio, descarga `cloudflared.exe` de la [release oficial de Cloudflare](https://github.com/cloudflare/cloudflared/releases) comprobando su suma SHA-256 (si no coincide, se detiene) y genera el instalador en:
+
+```text
+dist\win\Acta-<versión>-x64-Setup.exe
+```
+
+> **Truco 2 — ruta corta.** Si el clon está dentro de una carpeta muy profunda, el último paso falla con `makensis.exe process failed` y `!include: could not open file ... StdUtils.nsh`: una ruta interna de `node_modules` supera los 260 caracteres que admite el empaquetador NSIS. Clona en una ruta corta, vuelve a hacer `pnpm install` allí y repite.
+>
+> **Truco 3 — `npm_config_user_agent`.** electron-builder mira esa variable para saber qué gestor de paquetes se usó. Sin ella cree que es npm, ejecuta `npm list` y falla con `No JSON content found`. Con la variable usa pnpm y funciona.
+>
+> **Truco 4 — `EPERM: operation not permitted, unlink ... Acta.exe`.** Pasa si sigue abierta una Acta lanzada desde `dist\win\win-unpacked` de una compilación anterior. Ciérrala (también desde el icono de la bandeja, «Salir de Acta») o compila en otra carpeta:
+>
+> ```bash
+> node scripts/build-payload.mjs
+> node scripts/build-win-helper.mjs dist/payload/bin/acta-audio.exe
+> node scripts/fetch-cloudflared.mjs dist/payload/bin/cloudflared.exe
+> npm_config_user_agent="pnpm/11 node/v24 win32 x64" CSC_IDENTITY_AUTO_DISCOVERY=false \
+>   node node_modules/electron-builder/cli.js --win nsis --x64 --publish never \
+>   --config electron-builder.yml --config.electronVersion=$(node -p "require('electron/package.json').version") \
+>   --config.directories.output=dist/win-b
+> ```
+>
+> **Truco 5 — no hay `npx`.** Los scripts de esta rama no lo necesitan: llaman a Vite y a electron-builder directamente con `node`, así que funcionan aunque en el PC solo haya pnpm.
+
+### 4. Instala y configura
+
+1. Abre el `-Setup.exe`. No está firmado, así que Windows mostrará el aviso azul de SmartScreen: **Más información → Ejecutar de todas formas**.
+2. **Ajustes → Claves**: pega tu propia clave de [Groq](https://console.groq.com/keys) (tiene plan gratuito). Cada persona usa la suya; nada de esto viene en el repo.
+3. **Ajustes → Dictado**: elige el atajo (en Windows, «Ctrl + Windows» es mantener para hablar), el modelo del repaso y si quieres adaptar el estilo a cada app.
+4. **Ajustes → Móvil y tablet como micrófono**: actívalo y escanea el QR con la cámara del móvil.
+   - Si Windows pregunta por el firewall, permite **Redes privadas**.
+   - En la misma wifi, el navegador del móvil avisará de que la conexión «no es privada»: es normal, el certificado lo crea el propio ordenador. **Configuración avanzada → Acceder** (en iPhone, **Mostrar detalles → visitar este sitio web**).
+   - **Conectar también desde fuera de casa** abre el túnel de Cloudflare. Con él no sale ese aviso. La dirección cambia cada vez que Acta se reinicia: vuelve a escanear el QR. El código y el enlace vigentes se guardan siempre en `%APPDATA%\Acta\movil-qr.png` y `movil-enlace.txt`.
+   - Si alguien consigue tu enlace, pulsa **Nuevo código**: los dispositivos emparejados tendrán que volver a escanear.
+
+> **Truco 6 — VPN.** Groq bloquea muchas IP de VPN y responde `403 Access denied. Please check your network settings`. Si usas una VPN con túnel dividido (por ejemplo Proton VPN), excluye `Acta.exe` y también `cloudflared.exe` (está en la carpeta de instalación, dentro de `resources\app\bin`). Si con la VPN activa el móvil no conecta en la wifi de casa, activa en la VPN la opción de permitir conexiones de red local.
+
+Los datos de esta instalación quedan en `%APPDATA%\Acta`. La app usa el puerto 47331 en el propio ordenador y 47332 en la red local para el móvil.
+
+### Para modificar el código
+
+```bash
+node scripts/build-win-helper.mjs   # bin/acta-audio.exe
+node scripts/fetch-cloudflared.mjs  # bin/cloudflared.exe
+pnpm dev                            # servidor + interfaz en http://127.0.0.1:4848
+pnpm app                            # la app de escritorio contra el código del repo
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   # comprobar tipos
+```
+
+> **Truco 7 — saltos de línea.** Muchos archivos del repo usan CRLF. Los avisos de Git del tipo `LF will be replaced by CRLF` son normales y no rompen nada.
+
+---
+
 ## Instalar
 
 ### Opción 1 — Que lo haga Claude (recomendada)
