@@ -11,7 +11,8 @@ import { SAMPLE_RATE, transcribe, type SttProvider } from './transcribe.ts';
 export const bus = new EventEmitter();
 bus.setMaxListeners(50);
 
-export type Channel = 'me' | 'them';
+/** 'me' (this computer's mic), 'them' (the call's audio) or the name of a paired device ("Móvil"). */
+export type Channel = 'me' | 'them' | (string & {});
 const FRAME = 480; // 30 ms at 16 kHz
 const PREROLL_FRAMES = 10;
 const START_FRAMES = 3;
@@ -126,7 +127,7 @@ export class RecordingSession {
   baseOffsetMs: number;
   paused = false;
   stopped = false;
-  vads: Record<Channel, ChannelVad>;
+  vads: Record<string, ChannelVad>;
   sources: Source[] = [];
   queue: Promise<void>[] = [];
   inflight = 0;
@@ -138,7 +139,8 @@ export class RecordingSession {
   vocabulary = getSetting('vocabulary', '');
   levelTimer: NodeJS.Timeout;
   silenceTimer: NodeJS.Timeout;
-  rawStreams: Partial<Record<Channel, fs.WriteStream>> = {};
+  rawStreams: Record<string, fs.WriteStream> = {};
+  saveAudio: boolean;
   lastActivity = Date.now();
   errors: string[] = [];
   helperInfo: Record<string, any> = {};
@@ -151,7 +153,9 @@ export class RecordingSession {
     this.vads = { me: new ChannelVad('me', this), them: new ChannelVad('them', this) };
     this.levelTimer = setInterval(() => {
       if (!this.live) return;
-      bus.emit('event', { type: 'recording.level', meetingId, me: this.vads.me.level, them: this.vads.them.level, elapsedMs: this.elapsedMs() });
+      const devices: Record<string, number> = {};
+      for (const [ch, v] of Object.entries(this.vads)) if (ch !== 'me' && ch !== 'them') devices[ch] = v.level;
+      bus.emit('event', { type: 'recording.level', meetingId, me: this.vads.me.level, them: this.vads.them.level, devices, elapsedMs: this.elapsedMs() });
     }, 120);
     const autoStopMin = getSetting('autoStopMinutes', 12);
     this.silenceTimer = setInterval(() => {
@@ -160,11 +164,25 @@ export class RecordingSession {
         void stopRecording('autostop');
       }
     }, 15_000);
-    if (live && getSetting('saveAudio', false)) {
-      for (const ch of ['me', 'them'] as Channel[]) {
-        this.rawStreams[ch] = fs.createWriteStream(path.join(AUDIO_DIR, `${meetingId}-${ch}-${Date.now()}.raw`));
-      }
+    this.saveAudio = live && getSetting('saveAudio', false);
+  }
+
+  /** Raw PCM file for one channel, opened on its first audio and padded with silence so every channel lines up. */
+  private rawStream(channel: Channel) {
+    if (!this.saveAudio) return null;
+    let ws = this.rawStreams[channel];
+    if (!ws) {
+      const safe = channel.replace(/[^p{L}p{N}_-]+/gu, '_').slice(0, 40) || 'dev';
+      ws = fs.createWriteStream(path.join(AUDIO_DIR, `${this.meetingId}-${safe}-${Date.now()}.raw`));
+      const lead = Math.floor(((Date.now() - this.startedWall) / 1000) * SAMPLE_RATE);
+      if (lead > 0) ws.write(Buffer.alloc(lead * 2));
+      this.rawStreams[channel] = ws;
     }
+    return ws;
+  }
+
+  private vad(channel: Channel) {
+    return (this.vads[channel] ??= new ChannelVad(channel, this));
   }
 
   elapsedMs() {
@@ -178,8 +196,8 @@ export class RecordingSession {
 
   pushAudio(channel: Channel, samples: Int16Array, atMs = this.elapsedMs()) {
     if (this.paused || this.stopped) return;
-    this.rawStreams[channel]?.write(Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength));
-    this.vads[channel].push(samples, atMs);
+    this.rawStream(channel)?.write(Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength));
+    this.vad(channel).push(samples, atMs);
   }
 
   enqueue(channel: Channel, pcm: Int16Array, startMs: number, endMs: number) {
@@ -188,7 +206,8 @@ export class RecordingSession {
       try {
         const text = await transcribe(pcm, { provider: this.provider, language: this.language, vocabulary: this.vocabulary });
         if (!text) return;
-        if (channel === 'me' && isEcho(this.meetingId, text, startMs, endMs)) return;
+        // Two mics in one room hear the same words: keep whichever was transcribed first.
+        if (channel !== 'them' && isEcho(this.meetingId, channel, text, startMs, endMs)) return;
         const r = run(
           'INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, created_at) VALUES (?, ?, ?, ?, ?, ?)',
           this.meetingId, channel, Math.round(startMs), Math.round(endMs), text, now(),
@@ -246,10 +265,10 @@ export class RecordingSession {
 function tokens(s: string) {
   return new Set(s.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter((w) => w.length > 2));
 }
-function isEcho(meetingId: string, text: string, startMs: number, endMs: number) {
+function isEcho(meetingId: string, channel: Channel, text: string, startMs: number, endMs: number) {
   const near = all(
-    "SELECT text FROM segments WHERE meeting_id = ? AND speaker = 'them' AND end_ms >= ? AND start_ms <= ?",
-    meetingId, startMs - 4000, endMs + 4000,
+    'SELECT text FROM segments WHERE meeting_id = ? AND speaker <> ? AND end_ms >= ? AND start_ms <= ?',
+    meetingId, channel, startMs - 4000, endMs + 4000,
   );
   const a = tokens(text);
   if (a.size < 3) return false;
@@ -389,7 +408,7 @@ export async function stopRecording(reason = 'user') {
   setStatus(s.meetingId, 'done');
   reindexMeeting(s.meetingId);
   const raws = Object.values(s.rawStreams).map((w) => (w as any)?.path as string).filter(Boolean);
-  if (raws.length === 2) void mixAudio(s.meetingId, raws as string[]);
+  if (raws.length) void mixAudio(s.meetingId, raws);
   bus.emit('event', { type: 'recording.stopped', meetingId: s.meetingId, reason, errors: s.errors.slice(-5) });
 }
 
@@ -402,7 +421,8 @@ async function mixAudio(meetingId: string, raws: string[]) {
   const out = path.join(AUDIO_DIR, `${meetingId}.m4a`);
   const args = ['-y', '-loglevel', 'error'];
   for (const r of raws) args.push('-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1', '-i', r);
-  args.push('-filter_complex', 'amix=inputs=2:duration=longest', '-c:a', 'aac', '-b:a', '64k', out);
+  if (raws.length > 1) args.push('-filter_complex', `amix=inputs=${raws.length}:duration=longest`);
+  args.push('-c:a', 'aac', '-b:a', '64k', out);
   await new Promise<void>((resolve) => spawn('ffmpeg', args).on('exit', () => resolve()));
   if (fs.existsSync(out)) {
     run('UPDATE meetings SET audio_path = ? WHERE id = ?', out, meetingId);

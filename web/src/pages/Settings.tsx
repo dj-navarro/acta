@@ -5,6 +5,7 @@ import { api } from '../api';
 import { useApp } from '../store';
 import { Button, Input, PageHeader, Textarea, Toggle, cx, toast } from '../components/ui';
 import { GoogleAccounts } from '../components/Google';
+import { MobileCard } from '../components/Mobile';
 
 function Card({ id, title, desc, children }: { id: string; title: string; desc?: ReactNode; children: ReactNode }) {
   return (
@@ -168,6 +169,8 @@ export function SettingsPage() {
         </Row>
         <div className="px-5 py-3 text-[12px] text-ink-4">Usa el motor, el idioma y el vocabulario de «Transcripción». El audio del dictado no se guarda.</div>
       </Card>
+
+      <MobileCard />
 
       <Card id="ia" title="Inteligencia artificial" desc="Elige qué modelo escribe tus notas y cuál responde en el chat.">
         {(['notes', 'chat', 'fast'] as const).map((k) => (

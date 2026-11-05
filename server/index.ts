@@ -19,6 +19,7 @@ import { detectorState, startDetector, startCalendarWatcher, stopDetector } from
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
 import { providerAvailable } from './llm.ts';
 import { dictate, dictationSettings, DICTATION_SETTING_KEYS } from './dictation.ts';
+import { remoteInfo, rotateRemoteToken, startRemote, stopRemote } from './remote.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
@@ -195,12 +196,11 @@ app.get('/api/meetings', ah((req) => {
   return listMeetings();
 }));
 
-app.post('/api/meetings', ah((req) => {
-  const b = req.body || {};
+function createMeeting(b: any): string {
   const ev: CalEvent | undefined = b.calendarEvent;
   if (ev) {
     const existing = get('SELECT id FROM meetings WHERE calendar_event_id = ? AND archived_at IS NULL', ev.id);
-    if (existing) return { id: existing.id };
+    if (existing) return existing.id;
   }
   const id = uid('mt_');
   const t = now();
@@ -213,8 +213,10 @@ app.post('/api/meetings', ah((req) => {
   linkAttendees(id, attendees);
   reindexMeeting(id);
   bus.emit('event', { type: 'meetings.changed' });
-  return { id };
-}));
+  return id;
+}
+
+app.post('/api/meetings', ah((req) => ({ id: createMeeting(req.body || {}) })));
 
 app.get('/api/meetings/:id', ah((req) => {
   const m = parseMeeting(get('SELECT * FROM meetings WHERE id = ?', req.params.id));
@@ -561,6 +563,19 @@ app.post('/api/import', express.raw({ type: '*/*', limit: '4gb' }), ah(async (re
   return { id };
 }));
 
+// ---------- phones and tablets as microphones ----------
+const remoteOpts = { createNote: (title: string) => createMeeting({ title, source: 'remote' }) };
+app.get('/api/remote', ah((req) => remoteInfo(String(req.query.address || '') || undefined)));
+app.post('/api/remote', ah(async (req) => {
+  const b = req.body || {};
+  if (typeof b.enabled === 'boolean') {
+    setSetting('remoteEnabled', b.enabled);
+    if (b.enabled) await startRemote(remoteOpts); else await stopRemote();
+  }
+  if (b.rotate) await rotateRemoteToken();
+  return remoteInfo(b.address || undefined);
+}));
+
 // ---------- native helper ----------
 app.get('/api/helper/permissions', ah(async () => {
   if (!helperAvailable()) return { available: false };
@@ -632,6 +647,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`Datos: ${DATA_DIR}`);
   startDetector();
   startCalendarWatcher();
+  void startRemote(remoteOpts);
 });
 
 let shuttingDown = false;
@@ -640,6 +656,7 @@ async function shutdown() {
   shuttingDown = true;
   stopDetector();
   await stopRecording('shutdown').catch(() => {});
+  await stopRemote().catch(() => {});
   process.exit(0);
 }
 process.on('SIGTERM', () => void shutdown());

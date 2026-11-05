@@ -1,6 +1,6 @@
 {
   "name": "acta",
-  "version": "0.2.1-jorge.5",
+  "version": "0.2.1-jorge.6",
   "private": true,
   "description": "Acta — cuaderno de reuniones con IA, local (inspirado en Granola)",
   "type": "module",
@@ -27,6 +27,8 @@
     "@modelcontextprotocol/sdk": "^1.17.0",
     "express": "^5.1.0",
     "ical-expander": "^3.1.0",
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
     "ws": "^8.18.0",
     "zod": "^3.25.0"
   },
@@ -44,6 +46,7 @@
     "@tiptap/starter-kit": "^3.0.0",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/turndown": "^5.0.6",
