@@ -269,18 +269,29 @@ function bestUrl() {
 
 /** Rewrites movil-qr.png and movil-enlace.txt with the address that works right now. */
 async function writeLinkFiles() {
-  try {
-    const url = server ? bestUrl() : '';
-    if (!url) { fs.rmSync(QR_FILE, { force: true }); fs.rmSync(LINK_FILE, { force: true }); return; }
-    await QRCode.toFile(QR_FILE, url, { type: 'png', width: 640, margin: 2, errorCorrectionLevel: 'M' });
-    const away = url.includes('trycloudflare.com');
-    fs.writeFileSync(LINK_FILE, `${url}
-
-${away ? 'Funciona desde cualquier red. Cambia cada vez que Acta se reinicia.' : 'Solo funciona en la misma wifi que el ordenador.'}
-Actualizado: ${new Date().toLocaleString('es-ES')}
-`, { mode: 0o600 });
-  } catch (e: any) {
-    console.warn('[móvil] no pude guardar el QR', e?.message || e);
+  // Also into an extra folder of the user's choice (e.g. one a Telegram bot is allowed to send from).
+  const mirror = getSetting<string>('remoteQrMirror', '').trim();
+  const dirs = [DATA_DIR, ...(mirror ? [mirror] : [])];
+  const url = server ? bestUrl() : '';
+  const away = url.includes('trycloudflare.com');
+  const text = [
+    url,
+    '',
+    away ? 'Funciona desde cualquier red. Cambia cada vez que Acta se reinicia.' : 'Solo funciona en la misma wifi que el ordenador.',
+    `Actualizado: ${new Date().toLocaleString('es-ES')}`,
+    '',
+  ].join('\r\n');
+  for (const dir of dirs) {
+    const qr = path.join(dir, 'movil-qr.png');
+    const link = path.join(dir, 'movil-enlace.txt');
+    try {
+      if (!url) { fs.rmSync(qr, { force: true }); fs.rmSync(link, { force: true }); continue; }
+      fs.mkdirSync(dir, { recursive: true });
+      await QRCode.toFile(qr, url, { type: 'png', width: 640, margin: 2, errorCorrectionLevel: 'M' });
+      fs.writeFileSync(link, text, { mode: 0o600 });
+    } catch (e: any) {
+      console.warn('[móvil] no pude guardar el QR en', dir, e?.message || e);
+    }
   }
 }
 
@@ -288,6 +299,11 @@ function onTunnel(st: TunnelState) {
   bus.emit('event', { type: 'remote.tunnel', tunnel: st });
   if (st.status === 'ready') console.log(`[móvil] túnel listo: ${st.url}`);
   void writeLinkFiles();
+}
+
+export async function setQrMirror(dir: string) {
+  setSetting('remoteQrMirror', String(dir || '').trim());
+  await writeLinkFiles();
 }
 
 export async function setTunnel(on: boolean) {
@@ -407,5 +423,6 @@ export async function remoteInfo(preferred?: string) {
     devices: deviceList(),
     tunnel: { enabled: tunnel, available: tunnelAvailable(), ...ts },
     qrFile: server ? QR_FILE : '',
+    qrMirror: getSetting<string>('remoteQrMirror', ''),
   };
 }

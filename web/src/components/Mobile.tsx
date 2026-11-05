@@ -15,6 +15,7 @@ type RemoteInfo = {
   devices: { id: string; label: string; ip: string; streaming: boolean }[];
   tunnel: { enabled: boolean; available: boolean; status: 'off' | 'starting' | 'ready' | 'error'; url: string; error: string };
   qrFile: string;
+  qrMirror: string;
 };
 
 /** Settings card: pair phones and tablets as microphones with a QR code. */
@@ -100,7 +101,7 @@ export function MobileCard() {
                 </label>
               )}
               {info.qrFile && (
-                <div className="text-[12px] text-ink-4">El código actual también se guarda en <code className="text-[11.5px]">{info.qrFile}</code>, para mandártelo por Telegram si reinicias Acta fuera de casa.</div>
+                <div className="text-[12px] text-ink-4">El código actual también se guarda en <code className="text-[11.5px]">{info.qrFile}</code>, para mandártelo por Telegram si reinicias Acta fuera de casa.{info.qrMirror ? <> Copia en <code className="text-[11.5px]">{info.qrMirror}</code>.</> : null}</div>
               )}
               <div className="flex flex-wrap gap-2 pt-1">
                 <Button size="sm" variant="outline" onClick={() => void navigator.clipboard.writeText(info.url).then(() => toast('Enlace copiado: contiene el código, compártelo solo con tus dispositivos'))}><Copy size={13} /> Copiar enlace</Button>

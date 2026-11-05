@@ -19,7 +19,7 @@ import { detectorState, startDetector, startCalendarWatcher, stopDetector } from
 import { enhanceMeeting, extractActionItems, chat, brief, identifySpeakers } from './ai.ts';
 import { providerAvailable } from './llm.ts';
 import { dictate, dictationSettings, DICTATION_SETTING_KEYS } from './dictation.ts';
-import { remoteInfo, rotateRemoteToken, setTunnel, startRemote, stopRemote } from './remote.ts';
+import { remoteInfo, rotateRemoteToken, setQrMirror, setTunnel, startRemote, stopRemote } from './remote.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
 import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
 
@@ -573,6 +573,7 @@ app.post('/api/remote', ah(async (req) => {
     if (b.enabled) await startRemote(remoteOpts); else await stopRemote();
   }
   if (typeof b.tunnel === 'boolean') await setTunnel(b.tunnel);
+  if (typeof b.qrMirror === 'string') await setQrMirror(b.qrMirror);
   if (b.rotate) await rotateRemoteToken();
   return remoteInfo(b.address || undefined);
 }));

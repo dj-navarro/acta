@@ -1,6 +1,6 @@
 {
   "name": "acta",
-  "version": "0.2.1-jorge.7",
+  "version": "0.2.1-jorge.8",
   "private": true,
   "description": "Acta — cuaderno de reuniones con IA, local (inspirado en Granola)",
   "type": "module",
