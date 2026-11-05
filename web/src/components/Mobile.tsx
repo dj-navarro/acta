@@ -13,6 +13,8 @@ type RemoteInfo = {
   url: string;
   qr: string;
   devices: { id: string; label: string; ip: string; streaming: boolean }[];
+  tunnel: { enabled: boolean; available: boolean; status: 'off' | 'starting' | 'ready' | 'error'; url: string; error: string };
+  qrFile: string;
 };
 
 /** Settings card: pair phones and tablets as microphones with a QR code. */
@@ -24,6 +26,8 @@ export function MobileCard() {
   useEffect(() => { void load(); }, []);
   useEffect(() => onEvent((e) => {
     if (e.type === 'remote.devices') setInfo((cur) => (cur ? { ...cur, devices: e.devices } : cur));
+    // A new tunnel address means a new QR code: reload it.
+    if (e.type === 'remote.tunnel') void load();
   }), []);
 
   const post = async (body: any, msg?: string) => {
@@ -55,6 +59,21 @@ export function MobileCard() {
           <Toggle checked={!!info?.enabled} onChange={(v) => void post({ enabled: v }, v ? 'Listo: escanea el código con el móvil' : 'Desactivado')} />
         </div>
 
+        {info?.enabled && info.tunnel.available && (
+          <div className="flex items-center gap-6 px-5 py-3.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] text-ink">Conectar también desde fuera de casa</div>
+              <div className="mt-0.5 text-[12px] text-ink-4">
+                Con datos móviles o en otra wifi, a través de un túnel gratuito de Cloudflare. La dirección cambia cada vez que Acta se reinicia: vuelve a escanear el código.
+                {info.tunnel.enabled && info.tunnel.status === 'starting' && <span className="text-ink-3"> · Abriendo el túnel…</span>}
+                {info.tunnel.enabled && info.tunnel.status === 'ready' && <span className="text-accent-ink"> · Activo</span>}
+                {info.tunnel.enabled && info.tunnel.error && info.tunnel.status !== 'ready' && <span className="text-danger"> · {info.tunnel.error}</span>}
+              </div>
+            </div>
+            <Toggle checked={info.tunnel.enabled} onChange={(v) => void post({ tunnel: v, address: v ? 'internet' : undefined }, v ? 'Abriendo el túnel…' : 'Túnel cerrado')} />
+          </div>
+        )}
+
         {info?.enabled && info.error && (
           <div className="px-5 py-3 text-[12.5px] text-danger">No se pudo abrir la conexión: {info.error}</div>
         )}
@@ -69,16 +88,19 @@ export function MobileCard() {
             <div className="min-w-[240px] flex-1 space-y-2.5 text-[12.5px] text-ink-3">
               <ol className="list-decimal space-y-1.5 pl-4">
                 <li>Abre la cámara del móvil y apunta al código.</li>
-                <li>El navegador avisará de que la conexión «no es privada»: es normal, el certificado lo ha creado este ordenador. Pulsa <b className="text-ink-2">Configuración avanzada → Acceder</b> (en iPhone, <b className="text-ink-2">Mostrar detalles → visitar este sitio web</b>).</li>
+                {info.address !== 'internet' && <li>El navegador avisará de que la conexión «no es privada»: es normal, el certificado lo ha creado este ordenador. Pulsa <b className="text-ink-2">Configuración avanzada → Acceder</b> (en iPhone, <b className="text-ink-2">Mostrar detalles → visitar este sitio web</b>).</li>}
                 <li>Permite el micrófono y pulsa <b className="text-ink-2">Grabar</b>, o únete a la grabación que ya esté en marcha.</li>
               </ol>
               {info.addresses.length > 1 && (
                 <label className="flex items-center gap-2">
                   Red:
                   <select value={info.address} onChange={(e) => void load(e.target.value)} className="h-7 rounded-md border border-hairline-strong bg-raised px-1.5 text-[12px] text-ink outline-none">
-                    {info.addresses.map((a) => <option key={a.address} value={a.address}>{a.address} · {a.name}</option>)}
+                    {info.addresses.map((a) => <option key={a.address} value={a.address}>{a.address === 'internet' ? 'Cualquier red (túnel)' : `${a.address} · ${a.name}`}</option>)}
                   </select>
                 </label>
+              )}
+              {info.qrFile && (
+                <div className="text-[12px] text-ink-4">El código actual también se guarda en <code className="text-[11.5px]">{info.qrFile}</code>, para mandártelo por Telegram si reinicias Acta fuera de casa.</div>
               )}
               <div className="flex flex-wrap gap-2 pt-1">
                 <Button size="sm" variant="outline" onClick={() => void navigator.clipboard.writeText(info.url).then(() => toast('Enlace copiado: contiene el código, compártelo solo con tus dispositivos'))}><Copy size={13} /> Copiar enlace</Button>

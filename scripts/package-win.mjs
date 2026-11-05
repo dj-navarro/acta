@@ -59,6 +59,9 @@ if (prebuilt) {
   run(process.execPath, ['scripts/build-win-helper.mjs', helperOut]);
 }
 
+// Cloudflare quick tunnel, so phones can connect from outside the local network.
+run(process.execPath, ['scripts/fetch-cloudflared.mjs', path.join(root, 'dist', 'payload', 'bin', 'cloudflared.exe')]);
+
 const env = { ...process.env };
 if (!env.CSC_LINK) env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 

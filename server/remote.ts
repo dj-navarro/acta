@@ -14,9 +14,14 @@ import { DATA_DIR } from './env.ts';
 import { get, getSetting, setSetting } from './db.ts';
 import { activeSession, bus, startRecording, stopRecording } from './recorder.ts';
 import { MOBILE_HTML } from './mobile.ts';
+import { startTunnel, stopTunnel, tunnelAvailable, tunnelState, type TunnelState } from './tunnel.ts';
 
 export const REMOTE_DEFAULT_PORT = 47332;
 const CERT_FILE = path.join(DATA_DIR, 'remote-cert.json');
+/** The current QR code and link, kept up to date so they can be sent to the phone (Telegram, chat…). */
+export const QR_FILE = path.join(DATA_DIR, 'movil-qr.png');
+export const LINK_FILE = path.join(DATA_DIR, 'movil-enlace.txt');
+const TUNNEL = 'internet';
 
 type Device = {
   id: string;
@@ -45,6 +50,7 @@ export function remoteSettings() {
   return {
     enabled: getSetting('remoteEnabled', false),
     port: getSetting('remotePort', REMOTE_DEFAULT_PORT),
+    tunnel: getSetting('remoteTunnel', false),
   };
 }
 
@@ -251,6 +257,46 @@ bus.on('event', (ev) => {
   }
 });
 
+// ---------- the link the phone opens ----------
+function bestUrl() {
+  const { port, tunnel } = remoteSettings();
+  const t = token();
+  const ts = tunnelState();
+  if (tunnel && ts.status === 'ready' && ts.url) return `${ts.url}/#t=${t}`;
+  const lan = lanAddresses()[0];
+  return lan ? `https://${lan.address}:${port}/#t=${t}` : '';
+}
+
+/** Rewrites movil-qr.png and movil-enlace.txt with the address that works right now. */
+async function writeLinkFiles() {
+  try {
+    const url = server ? bestUrl() : '';
+    if (!url) { fs.rmSync(QR_FILE, { force: true }); fs.rmSync(LINK_FILE, { force: true }); return; }
+    await QRCode.toFile(QR_FILE, url, { type: 'png', width: 640, margin: 2, errorCorrectionLevel: 'M' });
+    const away = url.includes('trycloudflare.com');
+    fs.writeFileSync(LINK_FILE, `${url}
+
+${away ? 'Funciona desde cualquier red. Cambia cada vez que Acta se reinicia.' : 'Solo funciona en la misma wifi que el ordenador.'}
+Actualizado: ${new Date().toLocaleString('es-ES')}
+`, { mode: 0o600 });
+  } catch (e: any) {
+    console.warn('[móvil] no pude guardar el QR', e?.message || e);
+  }
+}
+
+function onTunnel(st: TunnelState) {
+  bus.emit('event', { type: 'remote.tunnel', tunnel: st });
+  if (st.status === 'ready') console.log(`[móvil] túnel listo: ${st.url}`);
+  void writeLinkFiles();
+}
+
+export async function setTunnel(on: boolean) {
+  setSetting('remoteTunnel', on);
+  if (on && server) startTunnel(remoteSettings().port, onTunnel);
+  if (!on) stopTunnel();
+  await writeLinkFiles();
+}
+
 // ---------- server ----------
 export async function startRemote(o: Options) {
   opts = o;
@@ -302,6 +348,8 @@ export async function startRemote(o: Options) {
       }
     }, 15_000);
     console.log(`[móvil] escuchando en https://0.0.0.0:${port}`);
+    if (remoteSettings().tunnel) startTunnel(port, onTunnel);
+    await writeLinkFiles();
   } catch (e: any) {
     lastError = e?.code === 'EADDRINUSE' ? `El puerto ${port} está ocupado por otra aplicación.` : String(e?.message || e);
     console.warn('[móvil]', lastError);
@@ -309,6 +357,7 @@ export async function startRemote(o: Options) {
 }
 
 export async function stopRemote() {
+  stopTunnel();
   if (ping) clearInterval(ping);
   ping = null;
   for (const d of devices.values()) { leave(d); try { d.ws.close(1001); } catch { /* gone */ } }
@@ -319,21 +368,31 @@ export async function stopRemote() {
   server = null;
   if (s) await new Promise<void>((r) => s.close(() => r()));
   announce();
+  await writeLinkFiles();
 }
 
 /** Forget every paired device: they need to scan the new code. */
 export async function rotateRemoteToken() {
   setSetting('remoteToken', crypto.randomBytes(18).toString('base64url'));
+  void writeLinkFiles();
   for (const d of devices.values()) { leave(d); try { d.ws.close(4401, 'nuevo código'); } catch { /* gone */ } }
 }
 
 export async function remoteInfo(preferred?: string) {
-  const { enabled, port } = remoteSettings();
+  const { enabled, port, tunnel } = remoteSettings();
   const addrs = lanAddresses();
+  const ts = tunnelState();
   // A new Wi-Fi gives a new address the certificate does not cover yet.
-  if (server && addrs.some((a) => !certIps.includes(a.address)) && opts) await startRemote(opts);
+  if (server && addrs.some((a) => !certIps.includes(a.address))) {
+    // Swap the certificate in place: restarting would also give the tunnel a new address.
+    certIps = addrs.map((x) => x.address);
+    const { key, cert } = await certificate(certIps);
+    server.setSecureContext({ key, cert });
+    void writeLinkFiles();
+  }
   const t = token();
   const urls = addrs.map((a) => ({ ...a, url: `https://${a.address}:${port}/#t=${t}` }));
+  if (tunnel && ts.status === 'ready' && ts.url) urls.unshift({ name: 'desde cualquier red', address: TUNNEL, url: `${ts.url}/#t=${t}` });
   const chosen = urls.find((u) => u.address === preferred) || urls[0];
   const qr = enabled && chosen ? await QRCode.toString(chosen.url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }) : '';
   return {
@@ -346,5 +405,7 @@ export async function remoteInfo(preferred?: string) {
     url: enabled && chosen ? chosen.url : '',
     qr,
     devices: deviceList(),
+    tunnel: { enabled: tunnel, available: tunnelAvailable(), ...ts },
+    qrFile: server ? QR_FILE : '',
   };
 }
