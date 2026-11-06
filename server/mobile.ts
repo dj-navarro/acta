@@ -109,32 +109,105 @@ small{color:var(--ink3);font-size:12.5px;line-height:1.4}
   show($('panel'), true);
 
   // ---------- connection ----------
+  // WebSocket first. Some networks (clinics, hotels) let web pages through but cut WebSockets:
+  // if it never opens, fall back to plain requests — a long poll for messages, POSTs for
+  // commands and audio. "?modo=reserva" in the address forces the fallback.
+  var mode = /[?&]modo=reserva/.test(location.search) ? 'http' : 'ws';
+  var wsFails = 0, polling = false, sending = false, dead = false, srvStreaming = false, fresh = true;
+
+  function onMsg(msg) {
+    if (msg.type === 'hello') { label = msg.label; $('label').textContent = label; conn('Conectado a ' + msg.computer + (mode === 'http' ? ' (modo reserva)' : ''), 'ok'); }
+    else if (msg.type === 'state') onState(msg);
+    else if (msg.type === 'segment') addSegment(msg.segment);
+    else if (msg.type === 'error') error(msg.message);
+  }
+  function expired() {
+    dead = true;
+    store.del('acta.token'); stopMic(); streaming = false;
+    show($('panel'), false); show($('unpaired'), true); conn('Código caducado', 'bad');
+  }
+  function lost() {
+    conn(streaming ? 'Reconectando… (guardo el audio)' : 'Sin conexión con el ordenador', 'bad');
+    retry++;
+  }
+
   function connect() {
+    if (dead) return;
+    if (mode === 'http') { if (!polling) poll(); return; }
     conn('Conectando…', '');
     var url = 'wss://' + location.host + '/ws?t=' + encodeURIComponent(token) + '&id=' + encodeURIComponent(devId) + '&name=' + encodeURIComponent(name);
-    ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    ws.onopen = function () { retry = 0; };
-    ws.onmessage = function (m) {
+    var opened = false;
+    var sock = new WebSocket(url);
+    ws = sock;
+    sock.binaryType = 'arraybuffer';
+    var timer = setTimeout(function () { if (!opened) { try { sock.close(); } catch (e) {} } }, 6000);
+    sock.onopen = function () { opened = true; clearTimeout(timer); retry = 0; wsFails = 0; };
+    sock.onmessage = function (m) {
       if (typeof m.data !== 'string') return;
       var msg; try { msg = JSON.parse(m.data); } catch (e) { return; }
-      if (msg.type === 'hello') { label = msg.label; $('label').textContent = label; conn('Conectado a ' + msg.computer, 'ok'); }
-      else if (msg.type === 'state') onState(msg);
-      else if (msg.type === 'segment') addSegment(msg.segment);
-      else if (msg.type === 'error') error(msg.message);
+      onMsg(msg);
     };
-    ws.onclose = function (e) {
-      ws = null;
-      if (e.code === 4401) { store.del('acta.token'); stopMic(); show($('panel'), false); show($('unpaired'), true); conn('Código caducado', 'bad'); return; }
-      conn(streaming ? 'Reconectando… (guardo el audio)' : 'Sin conexión con el ordenador', 'bad');
-      retry++;
+    sock.onclose = function (e) {
+      clearTimeout(timer);
+      if (ws === sock) ws = null;
+      if (e.code === 4401) { expired(); return; }
+      if (!opened && ++wsFails >= 2) { mode = 'http'; retry = 0; conn('Probando el modo de reserva…', ''); connect(); return; }
+      lost();
       setTimeout(connect, Math.min(5000, 800 * retry));
     };
   }
-  function cmd(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+  function api(method, path, body, timeoutMs, extra) {
+    var ctl = window.AbortController ? new AbortController() : null;
+    var t = ctl ? setTimeout(function () { ctl.abort(); }, timeoutMs) : 0;
+    var headers = { 'X-Acta-Token': token };
+    if (body !== undefined) headers['Content-Type'] = typeof body === 'string' ? 'application/json' : 'application/octet-stream';
+    return fetch(path + '?id=' + encodeURIComponent(devId) + '&name=' + encodeURIComponent(name) + (extra || ''), {
+      method: method, headers: headers, body: body, cache: 'no-store', signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+      clearTimeout(t);
+      if (r.status === 401) { expired(); throw new Error('caducado'); }
+      if (!r.ok) { var err = new Error('HTTP ' + r.status); err.status = r.status; throw err; }
+      return r.json();
+    }, function (e) { clearTimeout(t); throw e; });
+  }
+
+  function poll() {
+    if (dead) { polling = false; return; }
+    polling = true;
+    api('GET', '/poll', undefined, 35000, fresh ? '&hello=1' : '').then(function (r) {
+      retry = 0; fresh = false;
+      (r.messages || []).forEach(onMsg);
+      poll();
+    }).catch(function () {
+      if (dead) { polling = false; return; }
+      fresh = true;
+      lost();
+      setTimeout(poll, Math.min(5000, 800 * retry));
+    });
+  }
+
+  // Fallback audio: every second, what has piled up goes in one request, in order.
+  setInterval(function () {
+    if (mode !== 'http' || sending || !streaming || !srvStreaming || !backlog.length) return;
+    var batch = backlog.splice(0, 50), n = 0, i;
+    for (i = 0; i < batch.length; i++) n += batch[i].length;
+    var all = new Int16Array(n), at = 0;
+    for (i = 0; i < batch.length; i++) { all.set(batch[i], at); at += batch[i].length; }
+    sending = true;
+    api('POST', '/audio', all.buffer, 15000).then(function () { sending = false; }, function () {
+      sending = false;
+      if (streaming) { backlog = batch.concat(backlog); if (backlog.length > 900) backlog.splice(0, backlog.length - 900); }
+    });
+  }, 1000);
+
+  function cmd(o) {
+    if (mode === 'http') { api('POST', '/cmd', JSON.stringify(o), 15000).catch(function () {}); return; }
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+  }
 
   function onState(s) {
-    rec = s.recording; started = s.started;
+    rec = s.recording; started = s.started; srvStreaming = !!s.streaming;
     if (streaming && !s.streaming) {
       if (rec) cmd({ type: 'join' }); // reconnected mid-recording: carry on
       else { stopMic(); streaming = false; error(''); $('status').textContent = 'La grabación ha terminado.'; }
@@ -210,7 +283,9 @@ small{color:var(--ink3);font-size:12.5px;line-height:1.4}
   $('leaveBtn').onclick = function () { cmd({ type: 'leave' }); stopMic(); streaming = false; render(); };
   $('stopBtn').onclick = function () {
     if (!confirm('¿Terminar la grabación en el ordenador?')) return;
-    cmd({ type: 'stop' }); stopMic(); streaming = false; render();
+    cmd({ type: 'stop' }); stopMic(); streaming = false; rec = null;
+    $('status').textContent = 'La grabación ha terminado.';
+    render();
   };
   $('rename').onclick = function () {
     var n = prompt('Nombre de este dispositivo en la transcripción', label);
@@ -276,11 +351,12 @@ small{color:var(--ink3);font-size:12.5px;line-height:1.4}
     var level = Math.max(0, Math.min(1, (db + 55) / 45));
     $('ring').style.transform = 'scale(' + (0.72 + level * 0.28) + ')';
     if (!streaming) return;
-    if (ws && ws.readyState === 1 && !backlog.length) ws.send(pcm.buffer);
+    if (mode === 'ws' && ws && ws.readyState === 1 && !backlog.length) ws.send(pcm.buffer);
     else { backlog.push(pcm); if (backlog.length > 900) backlog.shift(); } // keeps the last 90 s
   }
 
   function flushBacklog() {
+    if (mode !== 'ws') return; // the fallback sends it on its own timer
     while (backlog.length && ws && ws.readyState === 1) ws.send(backlog.shift().buffer);
   }
 

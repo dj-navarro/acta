@@ -1,9 +1,12 @@
 // Phones and tablets as microphones. A second server listens on the local network over
 // HTTPS (browsers only open the mic on secure pages), serves a small page, and takes
-// 16 kHz PCM over a WebSocket. Each device is its own channel in the recording, named
-// after it ("Móvil", "Tablet"). Pairing is a QR code that carries a secret token.
+// 16 kHz PCM over a WebSocket — or, where a firewall blocks WebSockets (clinics, hotels),
+// over plain HTTP requests: long polling for messages, POSTs for audio. Each device is its
+// own channel in the recording, named after it ("Móvil", "Tablet"). Pairing is a QR code
+// that carries a secret token.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +30,12 @@ type Device = {
   id: string;
   label: string;
   ip: string;
-  ws: WebSocket;
+  /** Set for WebSocket devices; HTTP (fallback) devices use queue/waiter instead. */
+  ws: WebSocket | null;
+  queue: unknown[];
+  waiter: ServerResponse | null;
+  waitTimer: NodeJS.Timeout | null;
+  lastSeen: number;
   streaming: boolean;
   /** The recording this device started, so it can end it. */
   started: string | null;
@@ -113,7 +121,7 @@ async function certificate(ips: string[]) {
 
 // ---------- devices ----------
 function deviceList() {
-  return [...devices.values()].map((d) => ({ id: d.id, label: d.label, ip: d.ip, streaming: d.streaming, connectedAt: d.connectedAt }));
+  return [...devices.values()].map((d) => ({ id: d.id, label: d.label, ip: d.ip, streaming: d.streaming, connectedAt: d.connectedAt, mode: d.ws ? 'ws' : 'http' }));
 }
 
 function announce() {
@@ -137,7 +145,29 @@ function recordingState() {
 }
 
 function send(d: Device, msg: unknown) {
-  if (d.ws.readyState === 1) d.ws.send(JSON.stringify(msg));
+  if (d.ws) { if (d.ws.readyState === 1) d.ws.send(JSON.stringify(msg)); return; }
+  d.queue.push(msg);
+  if (d.queue.length > 500) d.queue.splice(0, d.queue.length - 500);
+  flushPoll(d);
+}
+
+/** Answers the pending long poll of an HTTP device with whatever is queued. */
+function flushPoll(d: Device, force = false) {
+  const res = d.waiter;
+  if (!res || (!d.queue.length && !force)) return;
+  d.waiter = null;
+  if (d.waitTimer) clearTimeout(d.waitTimer);
+  d.waitTimer = null;
+  json(res, 200, { messages: d.queue.splice(0) });
+}
+
+/** Disconnects a device for good (code 4401 = new pairing code, the phone must scan again). */
+function dropDevice(d: Device, code: number, reason = '') {
+  leave(d);
+  if (d.ws) { try { d.ws.close(code, reason); } catch { /* gone */ } return; }
+  devices.delete(d.id);
+  if (d.waitTimer) clearTimeout(d.waitTimer);
+  if (d.waiter) { json(d.waiter, code === 4401 ? 401 : 410, { error: reason || 'desconectado' }); d.waiter = null; }
 }
 
 function sendState(d: Device) {
@@ -195,30 +225,38 @@ async function onCommand(d: Device, msg: any) {
   sendState(d);
 }
 
-function onConnection(ws: WebSocket, url: URL, ip: string) {
-  const id = (url.searchParams.get('id') || crypto.randomUUID()).slice(0, 64);
+function newDevice(id: string, name: string, ip: string, ws: WebSocket | null): Device {
   const prev = devices.get(id);
-  if (prev) { try { prev.ws.terminate(); } catch { /* gone */ } }
+  if (prev) {
+    if (prev.ws) { try { prev.ws.terminate(); } catch { /* gone */ } }
+    if (prev.waitTimer) clearTimeout(prev.waitTimer);
+    if (prev.waiter) { json(prev.waiter, 200, { messages: [] }); prev.waiter = null; }
+  }
   const d: Device = {
     id,
-    label: prev?.label || uniqueLabel(url.searchParams.get('name') || '', id),
+    label: prev?.label || uniqueLabel(name, id),
     ip,
     ws,
+    queue: [],
+    waiter: null,
+    waitTimer: null,
+    lastSeen: Date.now(),
     streaming: false,
     started: prev?.started || null,
     connectedAt: Date.now(),
     alive: true,
   };
   devices.set(id, d);
+  return d;
+}
+
+function onConnection(ws: WebSocket, url: URL, ip: string) {
+  const id = (url.searchParams.get('id') || crypto.randomUUID()).slice(0, 64);
+  const d = newDevice(id, url.searchParams.get('name') || '', ip, ws);
   ws.on('pong', () => { d.alive = true; });
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
-      if (!d.streaming) return;
-      const s = activeSession();
-      const buf = data as Buffer;
-      if (!s || buf.length < 2) return;
-      const pcm = new Int16Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + (buf.length & ~1)));
-      s.pushAudio(d.label, pcm);
+      pushPcm(d, data as Buffer);
       return;
     }
     let msg: any;
@@ -234,6 +272,80 @@ function onConnection(ws: WebSocket, url: URL, ip: string) {
   send(d, { type: 'hello', label: d.label, computer: os.hostname() });
   sendState(d);
   announce();
+}
+
+function pushPcm(d: Device, buf: Buffer) {
+  const s = activeSession();
+  if (!s || !d.streaming || buf.length < 2) return;
+  s.pushAudio(d.label, new Int16Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + (buf.length & ~1))));
+}
+
+// ---------- HTTP fallback (no WebSocket) ----------
+// GET  /poll   long poll: waits up to 20 s for messages; the first one registers the device
+// POST /cmd    a command, JSON
+// POST /audio  PCM s16le 16 kHz, one or more 100 ms blocks back to back
+// The token goes in a header, not the address, so it stays out of proxy logs.
+const POLL_MS = 20_000;
+const HTTP_GONE_MS = 45_000;
+
+function json(res: ServerResponse, status: number, body: unknown) {
+  if (res.writableEnded || res.destroyed) return;
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: IncomingMessage, limit: number) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const parts: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('demasiado grande')); req.destroy(); return; }
+      parts.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(parts)));
+    req.on('error', reject);
+  });
+}
+
+async function onHttp(req: IncomingMessage, res: ServerResponse, url: URL) {
+  if (!tokenOk(String(req.headers['x-acta-token'] || ''))) return json(res, 401, { error: 'código no válido' });
+  const id = (url.searchParams.get('id') || '').slice(0, 64);
+  if (!id) return json(res, 400, { error: 'falta el id' });
+  const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  let d = devices.get(id);
+
+  if (url.pathname === '/poll' && req.method === 'GET') {
+    // hello=1: the page has just (re)started its polling and needs the greeting and state again.
+    if (!d || d.ws || url.searchParams.get('hello') === '1') {
+      d = newDevice(id, url.searchParams.get('name') || '', ip, null);
+      send(d, { type: 'hello', label: d.label, computer: os.hostname(), mode: 'http' });
+      sendState(d);
+      announce();
+    }
+    const dev = d;
+    dev.lastSeen = Date.now();
+    if (dev.waiter) flushPoll(dev, true); // an older poll from the same phone: release it
+    dev.waiter = res;
+    res.on('close', () => { if (dev.waiter === res) { dev.waiter = null; dev.lastSeen = Date.now(); } });
+    if (dev.queue.length) flushPoll(dev);
+    else dev.waitTimer = setTimeout(() => flushPoll(dev, true), POLL_MS);
+    return;
+  }
+  // Commands and audio need a device that has polled first (it may have been dropped meanwhile).
+  if (!d || d.ws) return json(res, 409, { error: 'sin sesión' });
+  d.lastSeen = Date.now();
+  if (url.pathname === '/cmd' && req.method === 'POST') {
+    let msg: any;
+    try { msg = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { return json(res, 400, { error: 'JSON no válido' }); }
+    try { await onCommand(d, msg); } catch (e: any) { send(d, { type: 'error', message: String(e?.message || e) }); }
+    return json(res, 200, { ok: true });
+  }
+  if (url.pathname === '/audio' && req.method === 'POST') {
+    pushPcm(d, await readBody(req, 4 * 1024 * 1024));
+    return json(res, 200, { ok: true, streaming: d.streaming });
+  }
+  json(res, 404, { error: 'no encontrado' });
 }
 
 // What the phones hear about: the recording's state and its transcript.
@@ -324,7 +436,12 @@ export async function startRemote(o: Options) {
     certIps = lanAddresses().map((a) => a.address);
     const { key, cert } = await certificate(certIps);
     const srv = https.createServer({ key, cert }, (req, res) => {
-      const p = (req.url || '/').split('?')[0];
+      const reqUrl = new URL(req.url || '/', 'https://acta');
+      const p = reqUrl.pathname;
+      if (p === '/poll' || p === '/cmd' || p === '/audio') {
+        onHttp(req, res, reqUrl).catch((e) => json(res, 500, { error: String(e?.message || e) }));
+        return;
+      }
       if (req.method === 'GET' && (p === '/' || p === '/m' || p === '/index.html')) {
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
@@ -357,11 +474,18 @@ export async function startRemote(o: Options) {
     server = srv;
     wss = sockets;
     ping = setInterval(() => {
-      for (const d of devices.values()) {
+      let gone = false;
+      for (const d of [...devices.values()]) {
+        if (!d.ws) {
+          // HTTP devices: gone once they stop polling.
+          if (!d.waiter && Date.now() - d.lastSeen > HTTP_GONE_MS) { leave(d); devices.delete(d.id); gone = true; }
+          continue;
+        }
         if (!d.alive) { d.ws.terminate(); continue; }
         d.alive = false;
         try { d.ws.ping(); } catch { /* closing */ }
       }
+      if (gone) announce();
     }, 15_000);
     console.log(`[móvil] escuchando en https://0.0.0.0:${port}`);
     if (remoteSettings().tunnel) startTunnel(port, onTunnel);
@@ -376,7 +500,7 @@ export async function stopRemote() {
   stopTunnel();
   if (ping) clearInterval(ping);
   ping = null;
-  for (const d of devices.values()) { leave(d); try { d.ws.close(1001); } catch { /* gone */ } }
+  for (const d of [...devices.values()]) dropDevice(d, 1001, 'Acta se ha cerrado');
   devices.clear();
   wss?.close();
   wss = null;
@@ -391,7 +515,8 @@ export async function stopRemote() {
 export async function rotateRemoteToken() {
   setSetting('remoteToken', crypto.randomBytes(18).toString('base64url'));
   void writeLinkFiles();
-  for (const d of devices.values()) { leave(d); try { d.ws.close(4401, 'nuevo código'); } catch { /* gone */ } }
+  for (const d of [...devices.values()]) dropDevice(d, 4401, 'nuevo código');
+  announce();
 }
 
 export async function remoteInfo(preferred?: string) {
