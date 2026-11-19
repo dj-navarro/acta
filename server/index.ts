@@ -21,7 +21,7 @@ import { providerAvailable } from './llm.ts';
 import { dictate, dictationSettings, DICTATION_SETTING_KEYS } from './dictation.ts';
 import { remoteInfo, rotateRemoteToken, setQrMirror, setTunnel, startRemote, stopRemote } from './remote.ts';
 import { toHtml, toMarkdown, writeExport, sendTo } from './integrations.ts';
-import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors } from './google.ts';
+import { accounts as googleAccounts, clearCustomClient, clientInfo as googleClientInfo, disconnect as googleDisconnect, googleConfigured, handleCallback as googleCallback, refreshCalendars, setCalendarsEnabled, setCustomClient, startAuth as googleAuth, googleErrors, checkAccounts as checkGoogleAccounts } from './google.ts';
 
 const execFileP = promisify(execFile);
 const DEV = process.argv.includes('--dev');
@@ -449,12 +449,15 @@ app.post('/api/google/connect', ah(async (req) => ({ url: await googleAuth(req.b
 app.get('/api/google/callback', async (req, res) => {
   res.type('html').send(await googleCallback(new URLSearchParams(req.url.split('?')[1] || '')));
 });
-app.get('/api/google/accounts', ah(() => ({
-  configured: googleConfigured(),
-  client: googleClientInfo(),
-  accounts: googleAccounts().map((a) => ({ email: a.email, name: a.name, picture: a.picture, calendars: a.calendars, connectedAt: a.connectedAt })),
-  errors: googleErrors(),
-})));
+app.get('/api/google/accounts', ah(async () => {
+  await checkGoogleAccounts();
+  return {
+    configured: googleConfigured(),
+    client: googleClientInfo(),
+    accounts: googleAccounts().map((a) => ({ email: a.email, name: a.name, picture: a.picture, calendars: a.calendars, connectedAt: a.connectedAt })),
+    errors: googleErrors(),
+  };
+}));
 app.put('/api/google/client', ah((req) => {
   setCustomClient({ id: req.body?.id, secret: req.body?.secret, json: req.body?.json });
   clearCalendarCache();

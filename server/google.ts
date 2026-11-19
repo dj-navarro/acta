@@ -1,6 +1,7 @@
 // "Conectar con Google": OAuth 2.0 (authorization code + PKCE) in the user's browser, then
 // Google Calendar read-only via the API. Several accounts can be connected at once.
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import crypto from 'node:crypto';
 import { getSetting, setSetting } from './db.ts';
 import { PORT, PACKAGED, buildConfig } from './env.ts';
@@ -45,9 +46,10 @@ function client(): GoogleClient {
     return {
       id: custom.id.trim(),
       secret: custom.secret.trim(),
-      // Same shape Google's own installed-app libraries use: loopback IP, its own port, root path.
-      // Acta listens there only while signing in (ensureCallbackListener).
-      redirect: (custom.redirect || `http://127.0.0.1:${PORT + 1}/`).trim(),
+      // Empty = same shape Google's own installed-app libraries use: loopback IP, a free port picked
+      // when signing in, root path. Desktop clients accept any loopback port. A fixed port clashed with
+      // the phone server (remote.ts listens on PORT + 1). Acta listens only while signing in.
+      redirect: (custom.redirect || '').trim(),
       source: 'custom',
     };
   }
@@ -67,7 +69,7 @@ function client(): GoogleClient {
 /** What Settings shows about the client in use. Never returns the secret. */
 export function clientInfo() {
   const c = client();
-  return { source: c.source, clientId: c.source === 'custom' ? c.id : '', redirect: c.redirect };
+  return { source: c.source, clientId: c.source === 'custom' ? c.id : '', redirect: c.redirect || 'http://127.0.0.1:<puerto libre>/' };
 }
 
 const CLIENT_ID_RE = /^[\w-]+\.apps\.googleusercontent\.com$/;
@@ -111,9 +113,10 @@ export const accounts = () => getSetting<GoogleAccount[]>('googleAccounts', []);
 function saveAccounts(a: GoogleAccount[]) { setSetting('googleAccounts', a); }
 
 // ---------- authorization ----------
-type Pending = { verifier: string; createdAt: number };
+type Pending = { verifier: string; createdAt: number; redirect: string };
 const pending = new Map<string, Pending>();
 let callbackServer: http.Server | null = null;
+let callbackRedirect = '';
 let callbackTimer: NodeJS.Timeout | null = null;
 
 const b64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -126,11 +129,11 @@ export async function startAuth(loginHint?: string) {
   const state = b64url(crypto.randomBytes(16));
   const verifier = b64url(crypto.randomBytes(48));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
-  pending.set(state, { verifier, createdAt: Date.now() });
-  await ensureCallbackListener(c.redirect);
+  const redirect = await ensureCallbackListener(c.redirect);
+  pending.set(state, { verifier, createdAt: Date.now(), redirect });
   const params = new URLSearchParams({
     client_id: c.id,
-    redirect_uri: c.redirect,
+    redirect_uri: redirect,
     response_type: 'code',
     scope: SCOPES.join(' '),
     access_type: 'offline',
@@ -145,29 +148,35 @@ export async function startAuth(loginHint?: string) {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-/** The redirect URI may live on another port (the registered one); listen there only while signing in. */
-async function ensureCallbackListener(redirect: string) {
-  const u = new URL(redirect);
-  if (Number(u.port || 80) === PORT) return;
+/**
+ * Where Google sends the browser back. Listens only while signing in and returns the redirect URI to use.
+ * `fixed` is the registered one (web clients, builds); empty means any free loopback port (Desktop clients).
+ */
+async function ensureCallbackListener(fixed: string): Promise<string> {
+  if (fixed && Number(new URL(fixed).port || 80) === PORT) return fixed;
   if (callbackTimer) clearTimeout(callbackTimer);
-  callbackTimer = setTimeout(() => { callbackServer?.close(); callbackServer = null; }, 10 * 60_000);
-  if (callbackServer) return;
-  callbackServer = http.createServer((req, res) => {
-    const url = new URL(req.url || '/', redirect);
+  callbackTimer = setTimeout(() => { callbackServer?.close(); callbackServer = null; callbackRedirect = ''; }, 10 * 60_000);
+  if (callbackServer && (!fixed || callbackRedirect === fixed)) return callbackRedirect;
+  if (callbackServer) { callbackServer.close(); callbackServer = null; callbackRedirect = ''; }
+  const u = new URL(fixed || 'http://127.0.0.1/');
+  const srv = http.createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
     if (url.pathname !== u.pathname) { res.writeHead(404).end(); return; }
     void handleCallback(url.searchParams).then((page) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page);
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    callbackServer!.once('error', (e: any) => {
-      callbackServer = null;
+  const port = await new Promise<number>((resolve, reject) => {
+    srv.once('error', (e: any) => {
       reject(new GoogleError(e.code === 'EADDRINUSE'
         ? `El puerto ${u.port} está ocupado por otra app. Ciérrala y vuelve a intentarlo.`
         : String(e.message)));
     });
-    callbackServer!.listen(Number(u.port || 80), '127.0.0.1', () => resolve());
+    srv.listen(fixed ? Number(u.port || 80) : 0, '127.0.0.1', () => resolve((srv.address() as AddressInfo).port));
   });
+  callbackServer = srv;
+  callbackRedirect = fixed || `http://127.0.0.1:${port}/`;
+  return callbackRedirect;
 }
 
 async function token(body: Record<string, string>) {
@@ -189,7 +198,7 @@ export async function handleCallback(q: URLSearchParams): Promise<string> {
     if (!p || Date.now() - p.createdAt > 15 * 60_000) throw new GoogleError('El enlace de inicio de sesión ha caducado. Vuelve a pulsar «Conectar con Google».');
     pending.delete(state);
     const c = client();
-    const t = await token({ code: q.get('code') || '', client_id: c.id, client_secret: c.secret, redirect_uri: c.redirect, grant_type: 'authorization_code', code_verifier: p.verifier });
+    const t = await token({ code: q.get('code') || '', client_id: c.id, client_secret: c.secret, redirect_uri: p.redirect, grant_type: 'authorization_code', code_verifier: p.verifier });
     const info: any = await (await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     const email = String(info.email || '').toLowerCase();
     const list = accounts();
@@ -245,7 +254,11 @@ async function accessToken(email: string) {
     saveAccounts(list);
     return a.accessToken;
   } catch (e: any) {
-    throw new GoogleError(`La sesión de Google de ${email} ha caducado: vuelve a conectarla. (${e.message})`);
+    // Google drops refresh tokens after 7 days while the Cloud project is still in "Testing".
+    const hint = /expired|revoked|invalid_grant/i.test(e.message)
+      ? ' Si te vuelve a pasar a los pocos días, tu proyecto de Google Cloud está en modo «Prueba»: publícalo en Pantalla de consentimiento de OAuth → Público → Publicar aplicación.'
+      : '';
+    throw new GoogleError(`La sesión de Google de ${email} ha caducado: vuelve a conectarla. (${e.message})${hint}`);
   }
 }
 
@@ -277,6 +290,8 @@ export async function refreshCalendars(email: string) {
     enabled: prev.has(c.id) ? prev.get(c.id)! : !!c.primary || (!!c.selected && !/holiday|#contacts|birthday|festivos/i.test(c.id)),
   }));
   saveAccounts(list);
+  delete errors[email];
+  lastListTry.delete(email);
   return a.calendars;
 }
 
@@ -302,9 +317,34 @@ const MEETING_URL = /(https?:\/\/(?:[\w-]+\.)?(?:zoom\.us\/[jw]\/[^\s"<>]+|meet\
 const cache = new Map<string, { at: number; events: CalEvent[] }>();
 const errors: Record<string, string> = {};
 
+/**
+ * Accounts with no calendars would read nothing and report nothing, so the person never learns that
+ * the connection broke. Retry their calendar list (at most every 10 minutes) and keep the error.
+ */
+const lastListTry = new Map<string, { at: number; error: string }>();
+export async function checkAccounts() {
+  for (const a of accounts()) {
+    if (!a.calendars.length) {
+      const last = lastListTry.get(a.email);
+      if (!last || Date.now() - last.at > 10 * 60_000) {
+        let error = '';
+        try {
+          if (!(await refreshCalendars(a.email)).length) error = `Google no devuelve ningún calendario de ${a.email}.`;
+        } catch (e: any) { error = e.message; }
+        lastListTry.set(a.email, { at: Date.now(), error });
+      }
+      const error = lastListTry.get(a.email)!.error;
+      if (error) errors[a.email] = error;
+    } else if (!a.calendars.some((c) => c.enabled)) {
+      errors[a.email] = 'No hay ningún calendario activado en esta cuenta: marca los que quieras ver.';
+    }
+  }
+}
+
 export async function googleEvents(from: Date, to: Date): Promise<CalEvent[]> {
   const out: CalEvent[] = [];
   for (const k of Object.keys(errors)) delete errors[k];
+  await checkAccounts();
   await Promise.all(accounts().map(async (a) => {
     for (const cal of a.calendars.filter((c) => c.enabled)) {
       const key = `${a.email}|${cal.id}|${from.getTime() - (from.getTime() % 60000)}|${to.getTime() - (to.getTime() % 60000)}`;
