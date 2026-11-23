@@ -9,12 +9,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm: el package-lock.json de upstream no tiene las dependencias nuevas de este fork (qrcode, selfsigned).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build:payload
-      - run: npm run smoke
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build:payload
+      - run: pnpm run smoke
       - run: bash -n scripts/package-mac.sh && bash -n scripts/brand-mac-app.sh && bash -n native/build.sh && node --check scripts/package-win.mjs && node --check scripts/build-win-helper.mjs
