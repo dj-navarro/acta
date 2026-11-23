@@ -16,7 +16,9 @@ on:
 
 jobs:
   dmg:
-    runs-on: macos-latest
+    # Mac Intel: los runners arm64 (macos-latest) se quedaban sin capacidad. Xcode compila también arm64,
+    # así que el .dmg sigue siendo universal.
+    runs-on: macos-15-intel
     env:
       # GitHub no admite `secrets` dentro de un `if:` de paso; se pasa por una variable del trabajo.
       HAS_CERT: ${{ secrets.CSC_LINK != '' }}
