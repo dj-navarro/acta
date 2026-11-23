@@ -76,6 +76,27 @@ function createDictation({ baseUrl, helperBin, onState }) {
   // Which app the text is for. Asked at the start, while that app still has the focus.
   function readForeground() {
     return new Promise((resolve) => {
+      if (process.platform === 'darwin') {
+        // macOS: nombre de la app al frente y título de su ventana (System Events; el título necesita
+        // el permiso de Accesibilidad, el mismo que ya hace falta para pegar con ⌘V).
+        const script = [
+          'tell application "System Events"',
+          '  set p to first application process whose frontmost is true',
+          '  set n to name of p',
+          '  set t to ""',
+          '  try',
+          '    set t to name of front window of p',
+          '  end try',
+          'end tell',
+          'return n & linefeed & t',
+        ].join('\n');
+        execFile('osascript', ['-e', script], { timeout: 1500 }, (err, stdout) => {
+          if (err) { resolve({ exe: '', title: '' }); return; }
+          const [name = '', ...rest] = String(stdout).replace(/\r?\n$/, '').split('\n');
+          resolve({ exe: name.trim(), title: rest.join(' ').trim() });
+        });
+        return;
+      }
       if (process.platform !== 'win32' || !fs.existsSync(helperBin)) { resolve({ exe: '', title: '' }); return; }
       execFile(helperBin, ['foreground'], { windowsHide: true, timeout: 1500 }, (err, stdout) => {
         try { resolve(err ? { exe: '', title: '' } : JSON.parse(String(stdout).trim())); } catch { resolve({ exe: '', title: '' }); }

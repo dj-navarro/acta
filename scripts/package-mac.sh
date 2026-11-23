@@ -101,6 +101,11 @@ assemble() {
   mkdir -p "$app/Contents/Resources/app/bin"
   cp "$helper" "$app/Contents/Resources/app/bin/acta-audio"
   chmod +x "$app/Contents/Resources/app/bin/acta-audio"
+  # Cloudflare quick tunnel (móvil desde fuera de casa), el binario oficial de esta arquitectura.
+  # make-universal.mjs lo une con lipo como el resto de binarios.
+  node scripts/fetch-cloudflared.mjs "$CACHE/cloudflared-${arch}" "darwin-${arch}"
+  cp "$CACHE/cloudflared-${arch}" "$app/Contents/Resources/app/bin/cloudflared"
+  chmod +x "$app/Contents/Resources/app/bin/cloudflared"
   echo "Montada: $app"
 }
 

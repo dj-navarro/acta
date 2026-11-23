@@ -49,6 +49,12 @@ const APP_RULES: { kind: AppKind; exe?: RegExp; title?: RegExp }[] = [
   { kind: 'document', title: /\b(google docs|documentos de google|word)\b/i },
   { kind: 'notes', exe: /^(notion|obsidian|onenote|notepad|notepad\+\+|evernote|logseq|acta)\.exe$/i },
   { kind: 'notes', title: /\b(notion|obsidian|onenote|bloc de notas|notepad)\b/i },
+  // macOS: el "exe" es el nombre de la app al frente (System Events), sin .exe.
+  { kind: 'email', exe: /^(mail|correo|microsoft outlook|outlook|thunderbird|mailspring|spark|airmail)$/i },
+  { kind: 'chat', exe: /^(whatsapp|telegram|slack|discord|signal|microsoft teams|teams|messenger|messages|mensajes)$/i },
+  { kind: 'code', exe: /^(code|cursor|windsurf|xcode|terminal|iterm2|warp|ghostty|intellij idea|pycharm|webstorm|claude)$/i },
+  { kind: 'document', exe: /^(microsoft word|pages|textedit|libreoffice|soffice)$/i },
+  { kind: 'notes', exe: /^(notes|notas|notion|obsidian|onenote|microsoft onenote|evernote|logseq|bear|acta)$/i },
 ];
 
 const APP_STYLE: Record<AppKind, string> = {
