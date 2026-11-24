@@ -24,7 +24,7 @@ jobs:
       HAS_CERT: ${{ secrets.CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
-      # pnpm: el pnpm-lock.yaml de este fork no se sube, y el package-lock.json de upstream no tiene las dependencias nuevas (qrcode, selfsigned).
+      # pnpm: el pnpm-lock.yaml fija las dependencias del fork (el package-lock.json de upstream está desactualizado).
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -45,7 +45,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions build.keychain
           security list-keychains -d user -s build.keychain login.keychain
           rm -f /tmp/acta-cert.p12
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - name: Empaquetar DMG universal
         env:
           ACTA_ARCH: ${{ github.event_name == 'workflow_dispatch' && inputs.arch || 'universal' }}
