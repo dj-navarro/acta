@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # pnpm: el pnpm-lock.yaml fija las dependencias del fork (el package-lock.json de upstream está desactualizado).
+      # pnpm: el pnpm-lock.yaml fija las dependencias del proyecto.
       - uses: pnpm/action-setup@v4
         with:
           version: 10
