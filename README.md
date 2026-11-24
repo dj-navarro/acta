@@ -4,7 +4,7 @@ Acta escucha tus llamadas (Zoom, Meet, Teams…) sin meter un bot, las transcrib
 
 ## Esta versión: dictado, móvil como micrófono y conexión desde fuera de casa
 
-Esta rama (`jorge/dictado` de [dj-navarro/acta](https://github.com/dj-navarro/acta/tree/jorge/dictado)) añade a Acta:
+Esta rama (`navarro/dictado` de [dj-navarro/acta](https://github.com/dj-navarro/acta/tree/navarro/dictado)) añade a Acta:
 
 - **Dictado en cualquier app**, como Wispr Flow: pulsas un atajo, hablas y el texto aparece donde esté el cursor, repasado con IA y adaptado a la app (correo, chat, código…). En Windows, además, **Ctrl + Windows**: mantener para hablar y soltar para pegar.
 - **Móvil o tablet como micrófono**: escaneas un QR y grabas desde el teléfono; la transcripción aparece en el ordenador en directo. Se pueden conectar varios a la vez y cada uno sale con su nombre.
@@ -26,7 +26,7 @@ Los instaladores de la sección «Instalar» de más abajo son los de Acta origi
 En **Git Bash**, dentro de una carpeta con una ruta corta (por ejemplo `C:\Users\<tu-usuario>` o `C:\dev`):
 
 ```bash
-git clone -b jorge/dictado https://github.com/dj-navarro/acta.git
+git clone -b navarro/dictado https://github.com/dj-navarro/acta.git
 cd acta
 pnpm install
 pnpm approve-builds electron esbuild '!electron-winstaller'
