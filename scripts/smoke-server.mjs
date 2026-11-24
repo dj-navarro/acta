@@ -8,7 +8,7 @@ const root = process.cwd();
 const payload = path.join(root, 'dist', 'payload');
 const entry = path.join(payload, 'server', 'index.js');
 if (!fs.existsSync(entry)) {
-  console.error('No está dist/payload. Ejecuta npm run build:payload');
+  console.error('No está dist/payload. Ejecuta pnpm run build:payload');
   process.exit(1);
 }
 

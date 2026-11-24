@@ -26,7 +26,7 @@ if (!fs.existsSync(src)) fail(`No está ${src}`);
 if (process.platform === 'win32') {
   const vswhere = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
   if (!fs.existsSync(vswhere)) {
-    fail('No encuentro vswhere. Instala Visual Studio con las herramientas de C++ (escritorio) y vuelve a ejecutar npm run build:native:win.');
+    fail('No encuentro vswhere. Instala Visual Studio con las herramientas de C++ (escritorio) y vuelve a ejecutar pnpm run build:native:win.');
   }
   const found = spawnSync(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { encoding: 'utf8' });
   const install = (found.stdout || '').trim();
@@ -43,7 +43,7 @@ if (process.platform === 'win32') {
     fail([
       'Falta el compilador cruzado de Windows (x86_64-w64-mingw32-g++).',
       'En Debian/Ubuntu: sudo apt-get install -y g++-mingw-w64-x86-64',
-      'En un PC con Windows no hace falta: npm run build:native:win usa Visual Studio.',
+      'En un PC con Windows no hace falta: pnpm run build:native:win usa Visual Studio.',
     ].join('\n'));
   }
   run(gxx, [

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the native audio/detection helper.
-#   npm run build:native                  # this Mac's architecture -> bin/acta-audio
+#   pnpm run build:native                  # this Mac's architecture -> bin/acta-audio
 #   ACTA_ARCH=arm64|x64|universal bash native/build.sh
 # Universal and x64 slices are for the distributable. Requires Xcode Command Line Tools.
 set -euo pipefail
@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "El capturador Swift solo se compila en macOS (swiftc, ScreenCaptureKit)." >&2
-  echo "En un Mac: npm run build:native" >&2
+  echo "En un Mac: pnpm run build:native" >&2
   exit 1
 fi
 command -v swiftc >/dev/null || { echo "Falta swiftc. Instala las herramientas: xcode-select --install" >&2; exit 1; }

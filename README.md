@@ -137,15 +137,15 @@ Ya puedes grabar. El detalle de cada paso está en [INSTALAR.md](INSTALAR.md), y
 Hace falta Node.js 22 o más reciente. El servidor en desarrollo se ejecuta como TypeScript nativo.
 
 ```bash
-npm install
-npm run dev          # http://127.0.0.1:4848
+pnpm install
+pnpm run dev          # http://127.0.0.1:4848
 ```
 
 App de escritorio contra el código del repo (usa el Node del sistema y, si existe, `.env.local`):
 
 ```bash
-npm run build:native # solo macOS, Xcode Command Line Tools
-npm run app          # electron .
+pnpm run build:native # solo macOS, Xcode Command Line Tools
+pnpm run app          # electron .
 ```
 
 En desarrollo, las claves se leen de `.env.local` subiendo carpetas (la más cercana gana) y no pisan variables que ya estén en el entorno. La app empaquetada no hace eso: cada persona escribe sus claves en Ajustes.
@@ -157,8 +157,8 @@ La app que se distribuye no usa el Node del sistema ni un directorio de trabajo 
 En un Mac (Apple Silicon o Intel, con `xcode-select --install` ya hecho):
 
 ```bash
-npm install
-npm run package:mac
+pnpm install
+pnpm run package:mac
 ```
 
 Eso genera:
@@ -170,7 +170,7 @@ Eso genera:
 Solo Apple Silicon, si el slice de Intel da problemas:
 
 ```bash
-ACTA_ARCH=arm64 npm run package:mac
+ACTA_ARCH=arm64 pnpm run package:mac
 ```
 
 `ACTA_ARCH` también puede ser `x64`. El mínimo del binario Swift es macOS 13.
@@ -181,7 +181,7 @@ Desde la 0.2.0, cada persona conecta su Google desde la propia app: carga en **A
 
 Con un cliente propio, Acta usa la redirección de bucle local `http://127.0.0.1:<puerto de la app + 1>/` (47332 en la app empaquetada) y solo abre ese puerto mientras dura el inicio de sesión. Los clientes de escritorio no necesitan registrarla.
 
-Opcional: meter un cliente de serie al empaquetar, para que nadie tenga que crear el suyo. `npm run package:mac` no lee `.env.local`; hay que exportarlo:
+Opcional: meter un cliente de serie al empaquetar, para que nadie tenga que crear el suyo. `pnpm run package:mac` no lee `.env.local`; hay que exportarlo:
 
 ```bash
 export ACTA_GOOGLE_CLIENT_ID="….apps.googleusercontent.com"
@@ -189,7 +189,7 @@ export ACTA_GOOGLE_CLIENT_SECRET="…"
 # Solo si el cliente ya tiene otra redirección registrada.
 # Si no, la app usa http://localhost:47331/api/google/callback.
 # export ACTA_GOOGLE_REDIRECT_URI="http://localhost:47331/api/google/callback"
-npm run package:mac
+pnpm run package:mac
 ```
 
 Ten en cuenta que Google limita a 100 usuarios las apps no verificadas con permisos de calendario, y que el secreto queda dentro de la app (en un programa de escritorio no es secreto de verdad): usa un proyecto de Google Cloud solo para Acta. Si una persona carga su propio cliente en Ajustes, se usa el suyo. La URL iCal y el Calendario del Mac funcionan siempre.
@@ -202,7 +202,7 @@ Con un certificado Developer ID ya instalado en el llavero:
 
 ```bash
 export ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)"
-npm run package:mac
+pnpm run package:mac
 ```
 
 Para notarizar (hace falta para que se abra con doble clic tras descargarla):
@@ -213,7 +213,7 @@ export APPLE_ID="tu@correo"
 export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 export APPLE_TEAM_ID="TEAMID"
 export ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)"
-npm run package:mac
+pnpm run package:mac
 ```
 
 `APPLE_APP_SPECIFIC_PASSWORD` es una contraseña de aplicación de Apple, no la de la cuenta.
@@ -231,15 +231,15 @@ La detección de reuniones (Zoom, Meet, Teams, Slack, Webex) es un programa pequ
 En un PC con Windows (hace falta Visual Studio con las herramientas de C++ de escritorio):
 
 ```bash
-npm install
-npm run package:win
+pnpm install
+pnpm run package:win
 ```
 
 En Linux o en un Mac hace falta el compilador cruzado `x86_64-w64-mingw32-g++` (en Debian/Ubuntu, `g++-mingw-w64-x86-64`). En Linux, además, Wine de 32 bits: electron-builder ejecuta el instalador NSIS, que es un stub de 32 bits, para extraer el desinstalador (`wine` y `wine32:i386`). En un Mac, electron-builder trae su propio Wine. El mismo comando genera el instalador:
 
 ```bash
-npm install
-npm run package:win
+pnpm install
+pnpm run package:win
 ```
 
 Salida: `dist/win/Acta-<versión>-x64-Setup.exe`.
@@ -247,12 +247,12 @@ Salida: `dist/win/Acta-<versión>-x64-Setup.exe`.
 Sin compilador de C++ a mano (por ejemplo, en un Mac sin MinGW), se puede reutilizar un `acta-audio.exe` ya compilado de una versión anterior, siempre que `native/win/acta-audio.cpp` no haya cambiado:
 
 ```bash
-ACTA_WIN_HELPER=/ruta/a/acta-audio.exe npm run package:win
+ACTA_WIN_HELPER=/ruta/a/acta-audio.exe pnpm run package:win
 ```
 
 Las variables de Google son las mismas que en macOS, y este script tampoco lee `.env.local`. Sin ellas, cada persona carga su propio cliente en Ajustes (ver [docs/GOOGLE.md](docs/GOOGLE.md)). Los datos quedan en `%APPDATA%\Acta`. El puerto de la app empaquetada sigue siendo 47331.
 
-Sin certificado, SmartScreen avisa. El texto para quien instala está en [INSTALAR.md](INSTALAR.md). Para firmar con Authenticode, exporta `CSC_LINK` (el .pfx en base64) y `CSC_KEY_PASSWORD` antes de `npm run package:win`.
+Sin certificado, SmartScreen avisa. El texto para quien instala está en [INSTALAR.md](INSTALAR.md). Para firmar con Authenticode, exporta `CSC_LINK` (el .pfx en base64) y `CSC_KEY_PASSWORD` antes de `pnpm run package:win`.
 
 El workflow `.github/workflows/windows-setup.yml` hace lo mismo en `windows-latest`.
 
@@ -282,10 +282,10 @@ Atajos: `⌘K` buscar · `⌘N` nueva nota · `⌘J` preguntar.
 ## Comprobar sin un Mac
 
 ```bash
-npm install
-npm run typecheck
-npm run build:payload
-npm run smoke
+pnpm install
+pnpm run typecheck
+pnpm run build:payload
+pnpm run smoke
 ```
 
 `smoke` arranca el servidor empaquetado, comprueba que ignora `.env.local` y que crea la base de datos en el directorio de datos.
