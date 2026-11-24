@@ -3,12 +3,12 @@
 // ACTA_GOOGLE_CLIENT_ID / ACTA_GOOGLE_CLIENT_SECRET / ACTA_GOOGLE_REDIRECT_URI.
 // Does not read .env.local.
 //
-//   npm install
-//   npm run package:win
+//   pnpm install
+//   pnpm run package:win
 //
 // On Linux this also needs MinGW (x86_64-w64-mingw32-g++) and 32-bit Wine
 // (the NSIS stub is 32-bit). On Windows it uses Visual Studio's C++ tools.
-// Without a C++ compiler: ACTA_WIN_HELPER=/path/to/acta-audio.exe npm run package:win
+// Without a C++ compiler: ACTA_WIN_HELPER=/path/to/acta-audio.exe pnpm run package:win
 // Output: dist/win/Acta-<version>-x64-Setup.exe
 //
 // Optional Authenticode signing (electron-builder reads these; omit both to ship unsigned):
@@ -29,11 +29,11 @@ function run(cmd, args, opts = {}) {
 }
 
 if (!fs.existsSync(path.join(root, 'node_modules', 'electron', 'package.json'))) {
-  console.error('Falta Electron. Ejecuta npm install en la raíz del repo.');
+  console.error('Falta Electron. Ejecuta pnpm install en la raíz del repo.');
   process.exit(1);
 }
 if (!fs.existsSync(path.join(root, 'node_modules', 'electron-builder'))) {
-  console.error('Falta electron-builder. Ejecuta npm install en la raíz del repo.');
+  console.error('Falta electron-builder. Ejecuta pnpm install en la raíz del repo.');
   process.exit(1);
 }
 

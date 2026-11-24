@@ -9,14 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # pnpm: el package-lock.json de upstream no tiene las dependencias nuevas de este fork (qrcode, selfsigned).
+      # pnpm: el pnpm-lock.yaml fija las dependencias del proyecto.
       - uses: pnpm/action-setup@v4
         with:
           version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
       - run: pnpm run build:payload
       - run: pnpm run smoke

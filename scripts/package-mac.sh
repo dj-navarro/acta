@@ -2,25 +2,25 @@
 # Builds a self-contained Acta.app plus a .dmg and a .zip.
 #
 # On a Mac (Apple Silicon or Intel, Xcode Command Line Tools):
-#   npm install
-#   npm run package:mac
+#   pnpm install
+#   pnpm run package:mac
 #
 # Output:
 #   dist/Acta-<version>-universal.dmg
 #   dist/Acta-<version>-universal.zip
 #
 # Apple Silicon only (faster, skips the Intel slice):
-#   ACTA_ARCH=arm64 npm run package:mac
+#   ACTA_ARCH=arm64 pnpm run package:mac
 #
 # Optional Google sign-in (not read from .env.local):
-#   ACTA_GOOGLE_CLIENT_ID=... ACTA_GOOGLE_CLIENT_SECRET=... npm run package:mac
+#   ACTA_GOOGLE_CLIENT_ID=... ACTA_GOOGLE_CLIENT_SECRET=... pnpm run package:mac
 # Register the redirect http://localhost:47331/api/google/callback on that OAuth client,
 # or pass ACTA_GOOGLE_REDIRECT_URI if the client already has another one.
 #
 # Optional Developer ID signing and notarization (omit both for an ad-hoc build):
-#   ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)" npm run package:mac
+#   ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)" pnpm run package:mac
 #   ACTA_NOTARIZE=1 APPLE_ID=... APPLE_APP_SPECIFIC_PASSWORD=... APPLE_TEAM_ID=... \
-#     ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)" npm run package:mac
+#     ACTA_CODESIGN_IDENTITY="Developer ID Application: Nombre (TEAMID)" pnpm run package:mac
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -30,14 +30,14 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 El .dmg de Acta solo se puede crear en macOS (swiftc, lipo, hdiutil).
 
 En este equipo puedes comprobar el resto:
-  npm install
-  npm run typecheck
-  npm run build:payload
-  npm run smoke
+  pnpm install
+  pnpm run typecheck
+  pnpm run build:payload
+  pnpm run smoke
 
 En un Mac (Apple Silicon o Intel, con Xcode Command Line Tools):
-  npm install
-  npm run package:mac
+  pnpm install
+  pnpm run package:mac
 
 Salida: dist/Acta-<version>-universal.dmg y dist/Acta-<version>-universal.zip
 EOF
